@@ -1,0 +1,23 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>WARNO-UltiAI-MODerator</AssemblyName>
+    <RootNamespace>WarnoModerator.App</RootNamespace>
+    <Product>WARNO UltiAI MODerator</Product>
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    <Description>Combine editable or Steam Workshop WARNO mods with UltiAI precedence.</Description>
+    <RepositoryUrl>https://github.com/Samy109/WARNO-UltiAI-MODerator</RepositoryUrl>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\WarnoModerator.Core\WarnoModerator.Core.csproj" />
+  </ItemGroup>
+
+</Project>
