@@ -6,7 +6,6 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
-    <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>WARNO-UltiAI-MODerator</AssemblyName>
     <RootNamespace>WarnoModerator.App</RootNamespace>
     <Product>WARNO UltiAI MODerator</Product>

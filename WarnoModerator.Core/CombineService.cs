@@ -113,7 +113,7 @@ public sealed class CombineService(
         catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
         {
             throw new CombineException(
-                "WARNO\\Mods is not writable. Approve the administrator prompt and verify that Windows Security or antivirus is not blocking the app.");
+                "WARNO\\Mods is not writable. Close the app, right-click WARNO-UltiAI-MODerator.exe, and choose 'Run as administrator'. If it still fails, verify that Windows Security or antivirus is not blocking the app.");
         }
         finally
         {
