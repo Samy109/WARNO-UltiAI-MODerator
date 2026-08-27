@@ -15,7 +15,8 @@ Initial public release, built around the Workshop-first user workflow.
 
 ## Included
 
-- Self-contained Windows x64 executable; no separate .NET installation required.
+- Self-contained Windows x64 folder distributed as a ZIP; extract the complete folder before running. No separate .NET installation is required.
+- Startup failures now display an error and write `%LOCALAPPDATA%\WARNO UltiAI MODerator\startup-error.log` instead of silently exiting.
 - Automatic discovery of installed WARNO Workshop mods.
 - Complete UltiAI database precedence for overlapping `.ndfbin` paths.
 - Merge preview, ModGen compatibility checks, and final hash verification.

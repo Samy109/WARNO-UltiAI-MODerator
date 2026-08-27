@@ -18,7 +18,7 @@ Editable SDK mods and UltiAIDEV remain supported as optional developer workflows
 
 1. Subscribe to **UltiAI** in the Steam Workshop and let Steam finish downloading it.
 2. Subscribe to the other Workshop mod you want to combine.
-3. Run `WARNO-UltiAI-MODerator.exe`, choose the other mod and the priority UltiAI variant, then preview.
+3. Download the release ZIP, extract the entire folder, then run `WARNO-UltiAI-MODerator.exe`. Choose the other mod and the priority UltiAI variant, then preview. Do not run the executable from inside the ZIP.
 4. Click **Create combined mod**. The app creates a local combined mod and verifies every planned output path.
 
 No editable files are needed for the normal Workshop workflow. If you are developing from source, editable mods found under `WARNO\Mods` are offered alongside Workshop versions; stale editable generations are rejected.
@@ -35,11 +35,11 @@ For Workshop packages with custom assets, the Workshop `Catalog.cat` is retained
 
 ## Development
 
-Requires the .NET 9 SDK on Windows.
+Requires the .NET 9 SDK on Windows when building from source. The release package is self-contained and does not require a separate .NET installation.
 
 ```powershell
 dotnet build WarnoModerator.sln
-dotnet publish WarnoModerator.App -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+dotnet publish WarnoModerator.App -c Release -r win-x64 --self-contained true
 ```
 
 This is an unofficial community utility and is not affiliated with Eugen Systems.
