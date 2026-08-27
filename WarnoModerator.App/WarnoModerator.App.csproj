@@ -13,6 +13,7 @@
     <AssemblyVersion>1.0.0.0</AssemblyVersion>
     <FileVersion>1.0.0.0</FileVersion>
     <InformationalVersion>1.0.0</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <Description>Combine editable or Steam Workshop WARNO mods with UltiAI precedence.</Description>
     <RepositoryUrl>https://github.com/Samy109/WARNO-UltiAI-MODerator</RepositoryUrl>
   </PropertyGroup>
