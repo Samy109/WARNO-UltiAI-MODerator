@@ -18,11 +18,6 @@ public sealed class MergePlanner(SourceDeltaAnalyzer deltaAnalyzer)
         var warnings = new List<string>();
         ValidateOutputName(outputName);
 
-        if (ulti.Kind != ModKind.EditableSource)
-        {
-            throw new CombineException("UltiAI must be available as an editable source mod.");
-        }
-
         if (other.RootPath.Equals(ulti.RootPath, StringComparison.OrdinalIgnoreCase))
         {
             throw new CombineException("Select a different mod to combine with UltiAI.");
@@ -35,9 +30,9 @@ public sealed class MergePlanner(SourceDeltaAnalyzer deltaAnalyzer)
             throw new CombineException($"An output named '{outputName}' already exists.");
         }
 
-        var decisions = other.Kind == ModKind.EditableSource
+        var decisions = other.Kind == ModKind.EditableSource && ulti.Kind == ModKind.EditableSource
             ? PlanSourceMerge(paths, other, ulti, warnings)
-            : PlanWorkshopMerge(other, ulti, warnings);
+            : PlanCompiledMerge(paths, other, ulti, warnings);
 
         return new MergePreview(outputName, other, ulti, decisions, warnings, true);
     }
@@ -117,15 +112,24 @@ public sealed class MergePlanner(SourceDeltaAnalyzer deltaAnalyzer)
         return decisions;
     }
 
-    private static IReadOnlyList<MergeDecision> PlanWorkshopMerge(
+    private static IReadOnlyList<MergeDecision> PlanCompiledMerge(
+        WarnoPaths paths,
         ModDescriptor other,
         ModDescriptor ulti,
         ICollection<string> warnings)
     {
-        ValidateUltiGeneration(ulti);
+        ValidatePriorityPayload(ulti);
 
-        if (!Directory.Exists(other.GenPath)
-            && !HasRuntimeContent(other.RootPath))
+        var otherRuntimeRoot = other.Kind == ModKind.WorkshopCompiled
+            ? other.RootPath
+            : Path.Combine(paths.SavedModsRoot, other.Name);
+        if (other.Kind == ModKind.EditableSource)
+        {
+            ValidateEditableGeneration(other);
+        }
+
+        if (!Directory.Exists(Path.Combine(otherRuntimeRoot, "Gen"))
+            && !HasRuntimeContent(otherRuntimeRoot))
         {
             throw new CombineException($"{other.Name} has no compiled Gen data, maps, scenarios, or runtime assets.");
         }
@@ -136,10 +140,10 @@ public sealed class MergePlanner(SourceDeltaAnalyzer deltaAnalyzer)
         {
             throw new CombineException(
                 $"{other.Name} uses ModGen {other.ModGenVersion}, but {ulti.Name} uses {ulti.ModGenVersion}. " +
-                "The Workshop mod must be updated by its author before it can be combined safely.");
+                "Both compiled payloads must use the same current ModGen revision.");
         }
 
-        var otherFiles = EnumerateRuntimeFiles(other.RootPath)
+        var otherFiles = EnumerateRuntimeFiles(otherRuntimeRoot)
             .ToDictionary(x => x.RelativePath, StringComparer.OrdinalIgnoreCase);
         var ultiFiles = EnumerateUltiOverlayFiles(ulti.GenPath)
             .ToDictionary(x => x.RelativePath, StringComparer.OrdinalIgnoreCase);
@@ -166,7 +170,7 @@ public sealed class MergePlanner(SourceDeltaAnalyzer deltaAnalyzer)
                     path,
                     hasUlti ? MergeDecisionKind.UltiOnly : MergeDecisionKind.OtherOnly,
                     hasUlti ? ulti.Name : other.Name,
-                    hasUlti ? "Ulti compiled/runtime component." : "Workshop compiled/runtime component."));
+                    hasUlti ? "Ulti compiled/runtime component." : "Base compiled/runtime component."));
             }
         }
 
@@ -178,32 +182,45 @@ public sealed class MergePlanner(SourceDeltaAnalyzer deltaAnalyzer)
         if (databaseCollisions.Length > 0)
         {
             warnings.Add(
-                "Workshop binaries cannot be split back into individual NDF files. " +
+                "Compiled binaries cannot be split back into individual NDF files. " +
                 $"Ulti will replace {databaseCollisions.Length} complete compiled database(s): " +
                 string.Join(", ", databaseCollisions.Select(Path.GetFileName)));
         }
 
-        if (File.Exists(Path.Combine(other.GenPath, "ResourceFile", "Catalog.cat")))
+        if (File.Exists(Path.Combine(otherRuntimeRoot, "Gen", "ResourceFile", "Catalog.cat")))
         {
             warnings.Add(
-                "The Workshop resource catalog will be retained so its custom assets remain registered. " +
+                "The base resource catalog will be retained so its custom assets remain registered. " +
                 "Catalog.cat is a compiled binary and cannot be safely merged; Ulti catalog-only cosmetic assets may be unavailable.");
         }
 
         return decisions;
     }
 
-    private static void ValidateUltiGeneration(ModDescriptor ulti)
+    private static void ValidatePriorityPayload(ModDescriptor ulti)
     {
-        var report = Path.Combine(ulti.GenPath, "GenerationReport.txt");
         var generatedFiles = EnumerateUltiOverlayFiles(ulti.GenPath).ToArray();
-        if (!File.Exists(report) || generatedFiles.Length == 0)
+        if (generatedFiles.Length == 0)
         {
             throw new CombineException(
-                $"{ulti.Name} has not been generated. Run its GenerateMod.bat before combining it with a Workshop mod.");
+                $"{ulti.Name} has no usable compiled priority payload. Refresh its Workshop subscription or run GenerateMod.bat for its editable source.");
         }
 
-        var newestChangedSource = new SourceDeltaAnalyzer().Analyze(ulti)
+        if (ulti.Kind == ModKind.EditableSource)
+        {
+            ValidateEditableGeneration(ulti);
+        }
+    }
+
+    private static void ValidateEditableGeneration(ModDescriptor mod)
+    {
+        var report = Path.Combine(mod.GenPath, "GenerationReport.txt");
+        if (!File.Exists(report))
+        {
+            throw new CombineException($"{mod.Name} has not been generated. Run its GenerateMod.bat, then refresh.");
+        }
+
+        var newestChangedSource = new SourceDeltaAnalyzer().Analyze(mod)
             .Where(x => x.SourcePath is not null)
             .Select(x => File.GetLastWriteTimeUtc(x.SourcePath!))
             .DefaultIfEmpty(DateTime.MinValue)
@@ -211,7 +228,7 @@ public sealed class MergePlanner(SourceDeltaAnalyzer deltaAnalyzer)
         if (File.GetLastWriteTimeUtc(report).AddSeconds(2) < newestChangedSource)
         {
             throw new CombineException(
-                $"{ulti.Name}'s generated files are older than its edited source. Run its GenerateMod.bat, then refresh.");
+                $"{mod.Name}'s generated files are older than its edited source. Run its GenerateMod.bat, then refresh.");
         }
     }
 

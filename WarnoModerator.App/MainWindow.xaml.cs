@@ -51,15 +51,16 @@ public partial class MainWindow : Window
             var mods = _scanner.Scan(_paths);
             OtherModBox.ItemsSource = mods.Where(m => !IsUlti(m)).ToList();
             var priorityMods = mods
-                .Where(m => IsUlti(m) && m.Kind == ModKind.EditableSource)
-                .OrderBy(m => m.Name, StringComparer.OrdinalIgnoreCase)
+                .Where(IsUlti)
+                .OrderByDescending(m => m.Kind == ModKind.WorkshopCompiled)
+                .ThenBy(m => m.Name, StringComparer.OrdinalIgnoreCase)
                 .ToList();
             UltiModBox.ItemsSource = priorityMods;
             OtherModBox.SelectedIndex = OtherModBox.Items.Count > 0 ? 0 : -1;
             UltiModBox.SelectedIndex = UltiModBox.Items.Count > 0 ? 0 : -1;
             Log($"Found {mods.Count(m => m.Kind == ModKind.EditableSource)} editable and {mods.Count(m => m.Kind == ModKind.WorkshopCompiled)} Workshop mods.");
             if (priorityMods.Count > 0) Log("Priority choices: " + string.Join(", ", priorityMods.Select(m => m.Name)) + ".");
-            if (UltiModBox.Items.Count == 0) Log("No editable UltiAI/UltiAIDEV source mod was found in WARNO\\Mods.");
+            if (UltiModBox.Items.Count == 0) Log("No installed UltiAI/UltiAIDEV Workshop or editable mod was found.");
         }
         catch (Exception ex) { ShowError(ex); }
     }
@@ -82,7 +83,7 @@ public partial class MainWindow : Window
     private CombineRequest GetRequest()
     {
         if (_paths is null || OtherModBox.SelectedItem is not ModDescriptor other || UltiModBox.SelectedItem is not ModDescriptor ulti)
-            throw new CombineException("Select both a mod and an editable UltiAI variant.");
+            throw new CombineException("Select both a mod and an UltiAI priority variant.");
         var preview = _planner.CreatePreview(_paths, other, ulti, OutputNameBox.Text.Trim());
         return new CombineRequest(_paths, other, ulti, OutputNameBox.Text.Trim(), preview);
     }

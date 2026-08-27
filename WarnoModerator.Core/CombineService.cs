@@ -39,17 +39,26 @@ public sealed class CombineService(
                 ApplySourceDelta(deltaAnalyzer.Analyze(request.OtherMod), outputSource);
             }
 
-            Log($"Applying {request.UltiMod.Name} with highest precedence...");
-            ApplySourceDelta(deltaAnalyzer.Analyze(request.UltiMod), outputSource);
-
-            Log("Generating the Ulti-aware output with WARNO...");
-            await RunGenerateAsync(request.Paths, outputSource, request.OutputName, Log, cancellationToken)
-                .ConfigureAwait(false);
-
-            if (request.OtherMod.Kind == ModKind.WorkshopCompiled)
+            if (request.UltiMod.Kind == ModKind.EditableSource)
             {
-                Log($"Composing compiled Workshop payload from {request.OtherMod.Name}...");
-                ComposeWorkshopPayload(request, outputSource, outputRuntime, Log);
+                Log($"Applying editable {request.UltiMod.Name} with highest precedence...");
+                ApplySourceDelta(deltaAnalyzer.Analyze(request.UltiMod), outputSource);
+            }
+
+            var requiresGeneration = request.OtherMod.Kind == ModKind.EditableSource
+                                     || request.UltiMod.Kind == ModKind.EditableSource;
+            if (requiresGeneration)
+            {
+                Log("Generating the editable source payload with WARNO...");
+                await RunGenerateAsync(request.Paths, outputSource, request.OutputName, Log, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            if (request.OtherMod.Kind == ModKind.WorkshopCompiled
+                || request.UltiMod.Kind == ModKind.WorkshopCompiled)
+            {
+                Log($"Composing compiled payloads with {request.UltiMod.Name} precedence...");
+                ComposeCompiledPayload(request, outputSource, outputRuntime, Log);
             }
 
             VerifyResult(request, outputSource, outputRuntime, Log);
@@ -127,7 +136,7 @@ public sealed class CombineService(
         }
     }
 
-    private void ComposeWorkshopPayload(
+    private void ComposeCompiledPayload(
         CombineRequest request,
         string outputSource,
         string outputRuntime,
@@ -139,7 +148,14 @@ public sealed class CombineService(
 
         try
         {
-            foreach (var item in MergePlanner.EnumerateRuntimeFiles(request.OtherMod.RootPath))
+            var otherRuntimeRoot = request.OtherMod.Kind == ModKind.WorkshopCompiled
+                ? request.OtherMod.RootPath
+                : outputRuntime;
+            var priorityRuntimeRoot = request.UltiMod.Kind == ModKind.WorkshopCompiled
+                ? request.UltiMod.RootPath
+                : outputSource;
+
+            foreach (var item in MergePlanner.EnumerateRuntimeFiles(otherRuntimeRoot))
             {
                 FileSystemOps.CopyFileAtomic(
                     item.FullPath,
@@ -147,7 +163,8 @@ public sealed class CombineService(
             }
 
             var outputGen = Path.Combine(outputSource, "Gen");
-            foreach (var item in MergePlanner.EnumerateUltiOverlayFiles(outputGen))
+            var priorityGen = Path.Combine(priorityRuntimeRoot, "Gen");
+            foreach (var item in MergePlanner.EnumerateUltiOverlayFiles(priorityGen))
             {
                 FileSystemOps.CopyFileAtomic(
                     item.FullPath,
@@ -157,16 +174,16 @@ public sealed class CombineService(
             var stagedCatalog = Path.Combine(staging, "Gen", "ResourceFile", "Catalog.cat");
             if (!File.Exists(stagedCatalog))
             {
-                var generatedCatalog = Path.Combine(outputGen, "ResourceFile", "Catalog.cat");
-                if (File.Exists(generatedCatalog))
+                var priorityCatalog = Path.Combine(priorityGen, "ResourceFile", "Catalog.cat");
+                if (File.Exists(priorityCatalog))
                 {
-                    FileSystemOps.CopyFileAtomic(generatedCatalog, stagedCatalog);
+                    FileSystemOps.CopyFileAtomic(priorityCatalog, stagedCatalog);
                 }
             }
 
-            VerifyCompiledPlan(request.Preview, staging, outputGen, request.OtherMod.RootPath);
+            VerifyCompiledPlan(request.Preview, staging, priorityRuntimeRoot, otherRuntimeRoot);
 
-            Directory.Move(outputGen, generatedBackup);
+            if (Directory.Exists(outputGen)) Directory.Move(outputGen, generatedBackup);
             Directory.Move(Path.Combine(staging, "Gen"), outputGen);
 
             foreach (var child in new[] { "GameData", "DatasMap", "DecorsSets", "Maps", "Scenarios" })
@@ -185,7 +202,7 @@ public sealed class CombineService(
             FileSystemOps.CopyDirectory(outputGen, runtimeGen);
 
             SynthesizeConfig(request, outputRuntime);
-            log("Workshop catalog retained; compiled Ulti databases applied afterward.");
+            log("Base catalog retained; compiled Ulti databases applied afterward.");
         }
         finally
         {
@@ -197,12 +214,10 @@ public sealed class CombineService(
     private static void SynthesizeConfig(CombineRequest request, string outputRuntime)
     {
         var outputConfigPath = Path.Combine(outputRuntime, "Config.ini");
-        if (!File.Exists(outputConfigPath))
-        {
-            throw new CombineException("WARNO did not create the output Config.ini.");
-        }
-
-        var output = IniDocument.Load(outputConfigPath);
+        Directory.CreateDirectory(outputRuntime);
+        var output = File.Exists(outputConfigPath)
+            ? IniDocument.Load(outputConfigPath)
+            : new IniDocument();
         output.Set("Properties", "Name", request.OutputName);
         output.Set("Properties", "TagList", string.Join(',', request.OtherMod.Tags
             .Union(request.UltiMod.Tags, StringComparer.OrdinalIgnoreCase)
@@ -235,8 +250,8 @@ public sealed class CombineService(
     private static void VerifyCompiledPlan(
         MergePreview preview,
         string staging,
-        string generatedUltiRoot,
-        string workshopRoot)
+        string priorityRoot,
+        string otherRoot)
     {
         foreach (var decision in preview.Decisions)
         {
@@ -247,8 +262,8 @@ public sealed class CombineService(
             }
 
             var expected = decision.Kind is MergeDecisionKind.UltiOnly or MergeDecisionKind.UltiOverride
-                ? FileSystemOps.SafeCombine(Path.GetDirectoryName(generatedUltiRoot)!, decision.RelativePath)
-                : FileSystemOps.SafeCombine(workshopRoot, decision.RelativePath);
+                ? FileSystemOps.SafeCombine(priorityRoot, decision.RelativePath)
+                : FileSystemOps.SafeCombine(otherRoot, decision.RelativePath);
             if (!File.Exists(expected)
                 || !SourceDeltaAnalyzer.ComputeSha256(actual).Equals(
                     SourceDeltaAnalyzer.ComputeSha256(expected),
@@ -277,7 +292,8 @@ public sealed class CombineService(
             throw new CombineException("The combined Gen output is incomplete.");
         }
 
-        if (request.OtherMod.Kind == ModKind.EditableSource)
+        if (request.OtherMod.Kind == ModKind.EditableSource
+            && request.UltiMod.Kind == ModKind.EditableSource)
         {
             foreach (var decision in request.Preview.Decisions)
             {
@@ -302,10 +318,7 @@ public sealed class CombineService(
             foreach (var decision in request.Preview.Decisions)
             {
                 var actual = FileSystemOps.SafeCombine(outputRuntime, decision.RelativePath);
-                var expectedRoot = decision.Kind is MergeDecisionKind.UltiOnly or MergeDecisionKind.UltiOverride
-                    ? outputSource
-                    : request.OtherMod.RootPath;
-                VerifySameFile(actual, FileSystemOps.SafeCombine(expectedRoot, decision.RelativePath), decision.RelativePath);
+                VerifySameFile(actual, FileSystemOps.SafeCombine(outputSource, decision.RelativePath), decision.RelativePath);
             }
         }
 
