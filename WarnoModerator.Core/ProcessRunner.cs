@@ -57,6 +57,7 @@ public sealed class ProcessRunner : IProcessRunner
         try
         {
             await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+            process.WaitForExit();
         }
         catch (OperationCanceledException)
         {

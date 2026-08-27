@@ -24,6 +24,7 @@ public sealed class CombineService(
             throw new CombineException("The output appeared after preview. Refresh and choose another name.");
         }
 
+        VerifyModDirectoryWritable(request.Paths.ModsRoot);
         Log($"Creating '{request.OutputName}' with WARNO's mod SDK...");
         await RunCreateNewModAsync(request, Log, cancellationToken).ConfigureAwait(false);
         if (!Directory.Exists(outputSource))
@@ -77,21 +78,46 @@ public sealed class CombineService(
         Action<string> log,
         CancellationToken cancellationToken)
     {
-        if (!File.Exists(request.Paths.CreateNewModBatch))
+        var python = Path.Combine(request.Paths.ModsRoot, "Utils", "Python", "python.exe");
+        var script = Path.Combine(request.Paths.ModsRoot, "Utils", "Scripts", "CreateNewMod.py");
+        if (!File.Exists(python) || !File.Exists(script))
         {
-            throw new CombineException("CreateNewMod.bat was not found in WARNO\\Mods.");
+            throw new CombineException("WARNO's CreateNewMod tools were not found under WARNO\\Mods\\Utils.");
         }
 
-        var command = $"\"\"{request.Paths.CreateNewModBatch}\" \"{request.OutputName}\"\"";
         var exitCode = await processRunner.RunAsync(
-            Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe",
-            ["/d", "/s", "/c", command],
+            python,
+            [script, request.OutputName],
             request.Paths.ModsRoot,
             log,
             cancellationToken).ConfigureAwait(false);
         if (exitCode != 0)
         {
             throw new CombineException($"CreateNewMod.bat failed with exit code {exitCode}.");
+        }
+    }
+
+    private static void VerifyModDirectoryWritable(string modsRoot)
+    {
+        var probe = Path.Combine(modsRoot, $".warno-moderator-write-{Guid.NewGuid():N}.tmp");
+        try
+        {
+            using var stream = new FileStream(
+                probe,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None,
+                1,
+                FileOptions.DeleteOnClose);
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+        {
+            throw new CombineException(
+                "WARNO\\Mods is not writable. Approve the administrator prompt and verify that Windows Security or antivirus is not blocking the app.");
+        }
+        finally
+        {
+            if (File.Exists(probe)) File.Delete(probe);
         }
     }
 

@@ -9,6 +9,9 @@ Initial public release, built around the Workshop-first user workflow.
 - The priority selector lists installed Workshop and editable UltiAI variants, with Workshop choices first.
 - Workshop + Workshop combinations skip unnecessary source generation and compose installed runtime payloads directly.
 - Editable + editable and mixed developer workflows remain available.
+- Requests administrator access required to create mods under `Program Files`.
+- Invokes WARNO's bundled `CreateNewMod.py` directly, avoiding `cmd.exe` path failures from the batch wrapper.
+- Reports a clear write-access error when Windows Security or filesystem permissions block `WARNO\Mods`.
 
 ## Included
 

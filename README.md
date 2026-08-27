@@ -23,6 +23,8 @@ Editable SDK mods and UltiAIDEV remain supported as optional developer workflows
 
 No editable files are needed for the normal Workshop workflow. If you are developing from source, editable mods found under `WARNO\Mods` are offered alongside Workshop versions; stale editable generations are rejected.
 
+Windows will request administrator approval when the application starts because WARNO's SDK creates the new source mod inside the game's `WARNO\Mods` directory, which is commonly under `Program Files`. The app invokes WARNO's bundled Python creation tool directly; denying elevation prevents mod creation.
+
 Inputs are never modified. If generation fails, the incomplete new output is preserved for inspection.
 
 ## Binary-format limitation
