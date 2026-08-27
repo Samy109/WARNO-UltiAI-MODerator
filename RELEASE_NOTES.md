@@ -21,5 +21,3 @@ Initial public release, built around the Workshop-first user workflow.
 ## Important limitation
 
 Compiled `.ndfbin` databases and `Catalog.cat` files cannot be safely merged object-by-object. An overlapping NDF database is replaced as a whole by UltiAI. The base Workshop resource catalog is retained to preserve its custom assets, so UltiAI catalog-only cosmetic assets may not appear.
-
-The experimental 10v10 AI feature is not included.

@@ -40,6 +40,4 @@ dotnet build WarnoModerator.sln
 dotnet publish WarnoModerator.App -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
 ```
 
-The experimental 10v10 AI feature is intentionally excluded: it should not be attempted unless a profile-independent, update-safe method is demonstrated.
-
 This is an unofficial community utility and is not affiliated with Eugen Systems.
