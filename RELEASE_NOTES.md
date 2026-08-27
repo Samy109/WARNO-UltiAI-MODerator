@@ -1,8 +1,8 @@
-# WARNO UltiAI MODerator v1.0.1
+# WARNO UltiAI MODerator v1.0.0
 
-This patch corrects the primary user workflow.
+Initial public release, built around the Workshop-first user workflow.
 
-## Fixed
+## Primary workflow
 
 - Workshop users can now combine a Workshop mod directly with the Workshop release of UltiAI.
 - Editable UltiAI source files are no longer required for normal use.
