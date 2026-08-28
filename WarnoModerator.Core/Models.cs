@@ -84,5 +84,6 @@ public sealed record CombineResult(
     string OutputRuntimePath,
     IReadOnlyList<string> LogLines);
 
-public sealed class CombineException(string message) : Exception(message);
+public sealed record CombineProgress(int Percent, string Stage);
 
+public sealed class CombineException(string message) : Exception(message);

@@ -42,7 +42,10 @@
             </Grid>
         </Border>
         <Grid Grid.Row="4" Margin="0,12,0,12"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-            <ProgressBar x:Name="BusyBar" Height="8" VerticalAlignment="Center" IsIndeterminate="True" Visibility="Collapsed"/>
+            <Grid x:Name="ProgressPanel" Margin="4" Visibility="Collapsed">
+                <ProgressBar x:Name="BusyBar" Height="22" Minimum="0" Maximum="100" Value="0" VerticalAlignment="Center"/>
+                <TextBlock x:Name="ProgressText" Text="Preparing · 0%" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="White" FontWeight="SemiBold" FontSize="11" IsHitTestVisible="False"/>
+            </Grid>
             <Button x:Name="PreviewButton" Grid.Column="1" Content="Preview merge" Click="Preview_Click"/>
             <Button x:Name="CombineButton" Grid.Column="2" Content="Create combined mod" Click="Combine_Click"/>
         </Grid>

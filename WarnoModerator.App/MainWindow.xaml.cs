@@ -118,7 +118,10 @@ public partial class MainWindow : Window
             if (MessageBox.Show($"Create '{request.OutputName}'?\n\n{preview.Decisions.Count:N0} paths will be composed. UltiAI wins {preview.OverrideCount:N0} collisions.", "Confirm merge", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
 
             SetBusy(true);
-            var result = await new CombineService(new SourceDeltaAnalyzer(), new ProcessRunner()).CombineAsync(request, new Progress<string>(Log));
+            var result = await new CombineService(new SourceDeltaAnalyzer(), new ProcessRunner()).CombineAsync(
+                request,
+                new Progress<string>(Log),
+                operationProgress: new Progress<CombineProgress>(UpdateProgress));
             Log($"DONE: {result.OutputSourcePath}");
             MessageBox.Show($"Combined mod created successfully.\n\n{result.OutputSourcePath}", "WARNO UltiAI MODerator", MessageBoxButton.OK, MessageBoxImage.Information);
             Process.Start(new ProcessStartInfo("explorer.exe", result.OutputSourcePath) { UseShellExecute = true });
@@ -129,7 +132,8 @@ public partial class MainWindow : Window
 
     private void SetBusy(bool busy)
     {
-        BusyBar.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+        ProgressPanel.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+        if (busy) UpdateProgress(new CombineProgress(0, "Preparing"));
         CombineButton.IsEnabled = !busy;
         PreviewButton.IsEnabled = !busy;
         BrowseButton.IsEnabled = !busy;
@@ -139,6 +143,12 @@ public partial class MainWindow : Window
         UltiModBox.IsEnabled = !busy;
         OutputNameBox.IsEnabled = !busy;
         System.Windows.Input.Mouse.OverrideCursor = busy ? System.Windows.Input.Cursors.Wait : null;
+    }
+
+    private void UpdateProgress(CombineProgress progress)
+    {
+        BusyBar.Value = progress.Percent;
+        ProgressText.Text = $"{progress.Stage} · {progress.Percent}%";
     }
 
     private void Log(string message)

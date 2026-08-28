@@ -7,7 +7,8 @@ public sealed class CombineService(
     public async Task<CombineResult> CombineAsync(
         CombineRequest request,
         IProgress<string>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IProgress<CombineProgress>? operationProgress = null)
     {
         var logLines = new List<string>();
         void Log(string line)
@@ -15,7 +16,10 @@ public sealed class CombineService(
             lock (logLines) logLines.Add(line);
             progress?.Report(line);
         }
+        void Report(int percent, string stage) =>
+            operationProgress?.Report(new CombineProgress(Math.Clamp(percent, 0, 100), stage));
 
+        Report(0, "Preparing");
         var outputSource = Path.Combine(request.Paths.ModsRoot, request.OutputName);
         var outputRuntime = Path.Combine(request.Paths.SavedModsRoot, request.OutputName);
 
@@ -31,6 +35,7 @@ public sealed class CombineService(
         {
             throw new CombineException("CreateNewMod.bat completed without creating the output directory.");
         }
+        Report(5, "Local mod created");
 
         try
         {
@@ -47,19 +52,22 @@ public sealed class CombineService(
             }
 
             Log("Generating the local mod manifest with the installed WARNO build...");
+            Report(10, "Generating with WARNO");
             await RunGenerateAsync(request.Paths, outputSource, request.OutputName, Log, cancellationToken)
                 .ConfigureAwait(false);
             ValidateGeneratedCompatibility(request, outputRuntime);
+            Report(40, "WARNO generation complete");
 
             if (request.OtherMod.Kind == ModKind.WorkshopCompiled
                 || request.UltiMod.Kind == ModKind.WorkshopCompiled)
             {
                 Log($"Composing compiled payloads with {request.UltiMod.Name} precedence...");
-                ComposeCompiledPayload(request, outputSource, outputRuntime, Log);
+                ComposeCompiledPayload(request, outputSource, outputRuntime, Log, Report);
             }
 
-            VerifyResult(request, outputSource, outputRuntime, Log);
+            VerifyResult(request, outputSource, outputRuntime, Log, Report);
             Log("Combination and verification completed successfully.");
+            Report(100, "Complete");
             return new CombineResult(outputSource, outputRuntime, logLines.ToArray());
         }
         catch
@@ -188,7 +196,8 @@ public sealed class CombineService(
         CombineRequest request,
         string outputSource,
         string outputRuntime,
-        Action<string> log)
+        Action<string> log,
+        Action<int, string> report)
     {
         var staging = Path.Combine(outputSource, ".combine-staging-" + Guid.NewGuid().ToString("N"));
         var generatedBackup = Path.Combine(outputSource, ".generated-ulti-" + Guid.NewGuid().ToString("N"));
@@ -203,20 +212,29 @@ public sealed class CombineService(
                 ? request.UltiMod.RootPath
                 : outputSource;
 
-            foreach (var item in MergePlanner.EnumerateRuntimeFiles(otherRuntimeRoot))
+            var baseFiles = MergePlanner.EnumerateRuntimeFiles(otherRuntimeRoot).ToArray();
+            var overlayFiles = MergePlanner.EnumerateUltiOverlayFiles(Path.Combine(priorityRuntimeRoot, "Gen")).ToArray();
+            var copyCount = baseFiles.Length + overlayFiles.Length;
+            var copied = 0;
+
+            foreach (var item in baseFiles)
             {
                 FileSystemOps.CopyFileAtomic(
                     item.FullPath,
                     FileSystemOps.SafeCombine(staging, item.RelativePath));
+                copied++;
+                ReportFileProgress(report, 42, 63, copied, copyCount, "Composing files");
             }
 
             var outputGen = Path.Combine(outputSource, "Gen");
             var priorityGen = Path.Combine(priorityRuntimeRoot, "Gen");
-            foreach (var item in MergePlanner.EnumerateUltiOverlayFiles(priorityGen))
+            foreach (var item in overlayFiles)
             {
                 FileSystemOps.CopyFileAtomic(
                     item.FullPath,
                     FileSystemOps.SafeCombine(staging, item.RelativePath));
+                copied++;
+                ReportFileProgress(report, 42, 63, copied, copyCount, "Composing files");
             }
 
             var stagedCatalog = Path.Combine(staging, "Gen", "ResourceFile", "Catalog.cat");
@@ -229,7 +247,7 @@ public sealed class CombineService(
                 }
             }
 
-            VerifyCompiledPlan(request.Preview, staging, priorityRuntimeRoot, otherRuntimeRoot);
+            VerifyCompiledPlan(request.Preview, staging, priorityRuntimeRoot, otherRuntimeRoot, report);
 
             if (Directory.Exists(outputGen)) Directory.Move(outputGen, generatedBackup);
             Directory.Move(Path.Combine(staging, "Gen"), outputGen);
@@ -243,11 +261,13 @@ public sealed class CombineService(
                     FileSystemOps.CopyDirectory(stagedChild, Path.Combine(outputRuntime, child));
                 }
             }
+            report(78, "Copying runtime assets");
 
             Directory.CreateDirectory(outputRuntime);
             var runtimeGen = Path.Combine(outputRuntime, "Gen");
             if (Directory.Exists(runtimeGen)) Directory.Delete(runtimeGen, true);
             FileSystemOps.CopyDirectory(outputGen, runtimeGen);
+            report(85, "Writing compatibility manifest");
 
             SynthesizeConfig(request, outputRuntime);
             log("Base catalog retained; compiled Ulti databases applied afterward.");
@@ -298,10 +318,12 @@ public sealed class CombineService(
         MergePreview preview,
         string staging,
         string priorityRoot,
-        string otherRoot)
+        string otherRoot,
+        Action<int, string> report)
     {
-        foreach (var decision in preview.Decisions)
+        for (var index = 0; index < preview.Decisions.Count; index++)
         {
+            var decision = preview.Decisions[index];
             var actual = FileSystemOps.SafeCombine(staging, decision.RelativePath);
             if (!File.Exists(actual))
             {
@@ -318,6 +340,8 @@ public sealed class CombineService(
             {
                 throw new CombineException($"Precedence verification failed for {decision.RelativePath}.");
             }
+
+            ReportFileProgress(report, 64, 76, index + 1, preview.Decisions.Count, "Verifying precedence");
         }
     }
 
@@ -325,7 +349,8 @@ public sealed class CombineService(
         CombineRequest request,
         string outputSource,
         string outputRuntime,
-        Action<string> log)
+        Action<string> log,
+        Action<int, string> report)
     {
         if (!File.Exists(Path.Combine(outputRuntime, "Config.ini")))
         {
@@ -342,8 +367,9 @@ public sealed class CombineService(
         if (request.OtherMod.Kind == ModKind.EditableSource
             && request.UltiMod.Kind == ModKind.EditableSource)
         {
-            foreach (var decision in request.Preview.Decisions)
+            for (var index = 0; index < request.Preview.Decisions.Count; index++)
             {
+                var decision = request.Preview.Decisions[index];
                 var actual = FileSystemOps.SafeCombine(outputSource, decision.RelativePath);
                 if (decision.Kind == MergeDecisionKind.Delete)
                 {
@@ -351,6 +377,7 @@ public sealed class CombineService(
                     {
                         throw new CombineException($"Deletion verification failed for {decision.RelativePath}.");
                     }
+                    ReportFileProgress(report, 86, 99, index + 1, request.Preview.Decisions.Count, "Final verification");
                     continue;
                 }
 
@@ -358,18 +385,39 @@ public sealed class CombineService(
                     ? request.UltiMod.RootPath
                     : request.OtherMod.RootPath;
                 VerifySameFile(actual, FileSystemOps.SafeCombine(winnerRoot, decision.RelativePath), decision.RelativePath);
+                ReportFileProgress(report, 86, 99, index + 1, request.Preview.Decisions.Count, "Final verification");
             }
         }
         else
         {
-            foreach (var decision in request.Preview.Decisions)
+            for (var index = 0; index < request.Preview.Decisions.Count; index++)
             {
+                var decision = request.Preview.Decisions[index];
                 var actual = FileSystemOps.SafeCombine(outputRuntime, decision.RelativePath);
                 VerifySameFile(actual, FileSystemOps.SafeCombine(outputSource, decision.RelativePath), decision.RelativePath);
+                ReportFileProgress(report, 86, 99, index + 1, request.Preview.Decisions.Count, "Final verification");
             }
         }
 
         log($"Verified {request.Preview.Decisions.Count} merge decisions.");
+    }
+
+    private static void ReportFileProgress(
+        Action<int, string> report,
+        int startPercent,
+        int endPercent,
+        int completed,
+        int total,
+        string stage)
+    {
+        if (total <= 0 || (completed != total && completed % 25 != 0))
+        {
+            return;
+        }
+
+        var percent = startPercent + (int)Math.Round(
+            (endPercent - startPercent) * (completed / (double)total));
+        report(percent, stage);
     }
 
     private static void VerifySameFile(string actual, string expected, string relativePath)

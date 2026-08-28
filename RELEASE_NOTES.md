@@ -23,6 +23,7 @@ Initial public release, built around the Workshop-first user workflow.
 - Complete UltiAI database precedence for overlapping `.ndfbin` paths.
 - Merge preview, ModGen compatibility checks, and final hash verification.
 - Military moss-green desktop interface.
+- Determinate progress bar with live stage text and percentage during generation, composition, and verification.
 
 ## Important limitation
 
