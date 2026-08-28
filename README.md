@@ -8,7 +8,7 @@ Editable SDK mods and UltiAIDEV remain supported as optional developer workflows
 
 ## Precedence model
 
-- Workshop + Workshop UltiAI: both installed compiled payloads are composed directly. No editable source is required.
+- Workshop + Workshop UltiAI: WARNO first generates a current local-mod compatibility manifest, then both installed compiled payloads are composed directly. No editable source is required.
 - Editable + editable UltiAI: each mod is compared with its matching `base.zip`. Only changed source files are applied, and the complete UltiAI file wins when both mods changed the same path.
 - Mixed source/Workshop combinations are also supported; the editable side is generated before compiled composition.
 - Compiled `.ndfbin` databases are atomic. They cannot safely be decompiled and merged object-by-object, so an overlapping database is replaced as a whole by UltiAI. The preview explicitly reports these collisions.
@@ -20,6 +20,8 @@ Editable SDK mods and UltiAIDEV remain supported as optional developer workflows
 2. Subscribe to the other Workshop mod you want to combine.
 3. Download the release ZIP, extract the entire folder, then run `WARNO-UltiAI-MODerator.exe`. Choose the other mod and the priority UltiAI variant, then preview. Do not run the executable from inside the ZIP.
 4. Click **Create combined mod**. The app creates a local combined mod and verifies every planned output path.
+
+WARNO itself generates the combined mod's local identity and compatibility baseline. The app rejects Workshop payloads whose `ModGenVersion` does not match the installed game, preventing game-room version mismatch packages.
 
 No editable files are needed for the normal Workshop workflow. If you are developing from source, editable mods found under `WARNO\Mods` are offered alongside Workshop versions; stale editable generations are rejected.
 

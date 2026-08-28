@@ -46,14 +46,10 @@ public sealed class CombineService(
                 ApplySourceDelta(deltaAnalyzer.Analyze(request.UltiMod), outputSource);
             }
 
-            var requiresGeneration = request.OtherMod.Kind == ModKind.EditableSource
-                                     || request.UltiMod.Kind == ModKind.EditableSource;
-            if (requiresGeneration)
-            {
-                Log("Generating the editable source payload with WARNO...");
-                await RunGenerateAsync(request.Paths, outputSource, request.OutputName, Log, cancellationToken)
-                    .ConfigureAwait(false);
-            }
+            Log("Generating the local mod manifest with the installed WARNO build...");
+            await RunGenerateAsync(request.Paths, outputSource, request.OutputName, Log, cancellationToken)
+                .ConfigureAwait(false);
+            ValidateGeneratedCompatibility(request, outputRuntime);
 
             if (request.OtherMod.Kind == ModKind.WorkshopCompiled
                 || request.UltiMod.Kind == ModKind.WorkshopCompiled)
@@ -162,6 +158,32 @@ public sealed class CombineService(
         }
     }
 
+    private static void ValidateGeneratedCompatibility(CombineRequest request, string outputRuntime)
+    {
+        var configPath = Path.Combine(outputRuntime, "Config.ini");
+        if (!File.Exists(configPath))
+        {
+            throw new CombineException("WARNO did not generate the local mod compatibility manifest.");
+        }
+
+        var generatedConfig = IniDocument.Load(configPath);
+        var currentModGen = generatedConfig.GetInt("Properties", "ModGenVersion", -1);
+        if (currentModGen < 0)
+        {
+            throw new CombineException("WARNO generated a compatibility manifest without a ModGen revision.");
+        }
+
+        foreach (var input in new[] { request.OtherMod, request.UltiMod })
+        {
+            if (input.ModGenVersion is int inputModGen && inputModGen != currentModGen)
+            {
+                throw new CombineException(
+                    $"{input.Name} uses ModGen {inputModGen}, but the installed WARNO build requires {currentModGen}. " +
+                    "Update the Workshop subscription before combining it.");
+            }
+        }
+    }
+
     private void ComposeCompiledPayload(
         CombineRequest request,
         string outputSource,
@@ -241,21 +263,20 @@ public sealed class CombineService(
     {
         var outputConfigPath = Path.Combine(outputRuntime, "Config.ini");
         Directory.CreateDirectory(outputRuntime);
-        var output = File.Exists(outputConfigPath)
-            ? IniDocument.Load(outputConfigPath)
-            : new IniDocument();
+        if (!File.Exists(outputConfigPath))
+        {
+            throw new CombineException("WARNO's generated local mod Config.ini is missing.");
+        }
+
+        var output = IniDocument.Load(outputConfigPath);
         output.Set("Properties", "Name", request.OutputName);
         output.Set("Properties", "TagList", string.Join(',', request.OtherMod.Tags
             .Union(request.UltiMod.Tags, StringComparer.OrdinalIgnoreCase)
             .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)));
-        output.Set("Properties", "Version", Math.Max(request.OtherMod.Version, request.UltiMod.Version).ToString());
+        output.Set("Properties", "ID", "0");
         output.Set("Properties", "DeckFormatVersion", Math.Max(
             request.OtherMod.DeckFormatVersion,
             request.UltiMod.DeckFormatVersion).ToString());
-        if (request.UltiMod.ModGenVersion is int modGen)
-        {
-            output.Set("Properties", "ModGenVersion", modGen.ToString());
-        }
 
         foreach (var pair in request.OtherMod.ConfigKeys)
         {

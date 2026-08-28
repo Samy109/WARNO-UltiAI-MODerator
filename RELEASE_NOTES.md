@@ -7,11 +7,13 @@ Initial public release, built around the Workshop-first user workflow.
 - Workshop users can now combine a Workshop mod directly with the Workshop release of UltiAI.
 - Editable UltiAI source files are no longer required for normal use.
 - The priority selector lists installed Workshop and editable UltiAI variants, with Workshop choices first.
-- Workshop + Workshop combinations skip unnecessary source generation and compose installed runtime payloads directly.
+- Workshop + Workshop combinations use WARNO to generate a valid local-mod identity and current compatibility baseline before composing installed runtime payloads.
 - Editable + editable and mixed developer workflows remain available.
 - Launches normally without forced elevation. Users whose WARNO folder is protected by Windows can explicitly choose **Run as administrator** when creating a mod.
 - Invokes WARNO's bundled `CreateNewMod.py` directly, avoiding `cmd.exe` path failures from the batch wrapper.
 - Reports a clear write-access error when Windows Security or filesystem permissions block `WARNO\Mods`.
+- Rejects Workshop payloads that do not match the installed game's freshly generated `ModGenVersion`.
+- Preserves Eugen's `[Config] ; comment` compatibility section and merges its game-room fingerprints instead of silently dropping them.
 
 ## Included
 

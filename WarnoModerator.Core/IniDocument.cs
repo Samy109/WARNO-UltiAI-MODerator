@@ -29,11 +29,21 @@ public sealed class IniDocument
                 continue;
             }
 
-            if (line.StartsWith('[') && line.EndsWith(']'))
+            if (line.StartsWith('['))
             {
-                section = line[1..^1].Trim();
-                document.GetOrCreateSection(section);
-                continue;
+                var closingBracket = line.IndexOf(']');
+                if (closingBracket > 1)
+                {
+                    var trailingText = line[(closingBracket + 1)..].TrimStart();
+                    if (trailingText.Length == 0
+                        || trailingText.StartsWith(';')
+                        || trailingText.StartsWith('#'))
+                    {
+                        section = line[1..closingBracket].Trim();
+                        document.GetOrCreateSection(section);
+                        continue;
+                    }
+                }
             }
 
             var equals = line.IndexOf('=');
@@ -103,4 +113,3 @@ public sealed class IniDocument
         return semicolon >= 0 ? value[..semicolon] : value;
     }
 }
-
