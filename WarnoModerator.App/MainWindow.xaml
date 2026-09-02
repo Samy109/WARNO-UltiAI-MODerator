@@ -41,13 +41,14 @@
                 </DataGrid>
             </Grid>
         </Border>
-        <Grid Grid.Row="4" Margin="0,12,0,12"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+        <Grid Grid.Row="4" Margin="0,12,0,12"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <Grid x:Name="ProgressPanel" Margin="4" Visibility="Collapsed">
                 <ProgressBar x:Name="BusyBar" Height="22" Minimum="0" Maximum="100" Value="0" VerticalAlignment="Center"/>
                 <TextBlock x:Name="ProgressText" Text="Preparing · 0%" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="White" FontWeight="SemiBold" FontSize="11" IsHitTestVisible="False"/>
             </Grid>
             <Button x:Name="PreviewButton" Grid.Column="1" Content="Preview merge" Click="Preview_Click"/>
-            <Button x:Name="CombineButton" Grid.Column="2" Content="Create combined mod" Click="Combine_Click"/>
+            <Button x:Name="CombineButton" Grid.Column="2" Content="Create as New" Click="Combine_Click"/>
+            <Button x:Name="UpdateButton" Grid.Column="3" Content="Update and Rebuild" Click="Update_Click" IsEnabled="False"/>
         </Grid>
         <Border Grid.Row="5" Background="{StaticResource LogBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="7" Padding="12">
             <TextBox x:Name="LogBox" IsReadOnly="True" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" TextWrapping="Wrap" Background="Transparent" Foreground="#D9E0CC" BorderThickness="0" FontFamily="Cascadia Mono,Consolas" FontSize="12"/>

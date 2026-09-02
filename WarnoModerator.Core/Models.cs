@@ -86,4 +86,18 @@ public sealed record CombineResult(
 
 public sealed record CombineProgress(int Percent, string Stage);
 
+public sealed record SourceModFingerprint(
+    string Name,
+    string RootPath,
+    string Fingerprint);
+
+public sealed record CombinedModState(
+    int SchemaVersion,
+    string OutputName,
+    SourceModFingerprint OtherMod,
+    SourceModFingerprint PriorityMod)
+{
+    public const int CurrentSchemaVersion = 1;
+}
+
 public sealed class CombineException(string message) : Exception(message);

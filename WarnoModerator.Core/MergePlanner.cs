@@ -13,7 +13,8 @@ public sealed class MergePlanner(SourceDeltaAnalyzer deltaAnalyzer)
         WarnoPaths paths,
         ModDescriptor other,
         ModDescriptor ulti,
-        string outputName)
+        string outputName,
+        bool allowExistingOutput = false)
     {
         var warnings = new List<string>();
         ValidateOutputName(outputName);
@@ -25,7 +26,7 @@ public sealed class MergePlanner(SourceDeltaAnalyzer deltaAnalyzer)
 
         var outputPath = Path.Combine(paths.ModsRoot, outputName);
         var savedOutputPath = Path.Combine(paths.SavedModsRoot, outputName);
-        if (Directory.Exists(outputPath) || Directory.Exists(savedOutputPath))
+        if (!allowExistingOutput && (Directory.Exists(outputPath) || Directory.Exists(savedOutputPath)))
         {
             throw new CombineException($"An output named '{outputName}' already exists.");
         }

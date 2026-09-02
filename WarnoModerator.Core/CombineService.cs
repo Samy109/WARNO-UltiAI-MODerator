@@ -8,7 +8,8 @@ public sealed class CombineService(
         CombineRequest request,
         IProgress<string>? progress = null,
         CancellationToken cancellationToken = default,
-        IProgress<CombineProgress>? operationProgress = null)
+        IProgress<CombineProgress>? operationProgress = null,
+        bool preserveIncompleteOutput = true)
     {
         var logLines = new List<string>();
         void Log(string line)
@@ -72,7 +73,71 @@ public sealed class CombineService(
         }
         catch
         {
-            Log("The operation stopped. Input mods were not changed; the incomplete output was preserved for inspection.");
+            Log(preserveIncompleteOutput
+                ? "The operation stopped. Input mods were not changed; the incomplete output was preserved for inspection."
+                : "The operation stopped. Input mods were not changed.");
+            throw;
+        }
+    }
+
+    public async Task<CombineResult> RebuildAsync(
+        CombineRequest request,
+        IProgress<string>? progress = null,
+        CancellationToken cancellationToken = default,
+        IProgress<CombineProgress>? operationProgress = null)
+    {
+        var outputSource = Path.Combine(request.Paths.ModsRoot, request.OutputName);
+        var outputRuntime = Path.Combine(request.Paths.SavedModsRoot, request.OutputName);
+        if (!Directory.Exists(outputSource) && !Directory.Exists(outputRuntime))
+        {
+            throw new CombineException("The existing combined mod could not be found. Refresh the mod list and try again.");
+        }
+
+        VerifyModDirectoryWritable(request.Paths.ModsRoot);
+        var sourceBackup = outputSource + ".warno-moderator-backup-" + Guid.NewGuid().ToString("N");
+        var runtimeBackup = outputRuntime + ".warno-moderator-backup-" + Guid.NewGuid().ToString("N");
+        var sourceMoved = false;
+        var runtimeMoved = false;
+
+        try
+        {
+            progress?.Report("Safeguarding the existing combined mod...");
+            if (Directory.Exists(outputSource))
+            {
+                Directory.Move(outputSource, sourceBackup);
+                sourceMoved = true;
+            }
+            if (Directory.Exists(outputRuntime))
+            {
+                Directory.Move(outputRuntime, runtimeBackup);
+                runtimeMoved = true;
+            }
+
+            var result = await CombineAsync(
+                request,
+                progress,
+                cancellationToken,
+                operationProgress,
+                preserveIncompleteOutput: false).ConfigureAwait(false);
+
+            TryDeleteDirectory(sourceBackup);
+            TryDeleteDirectory(runtimeBackup);
+            progress?.Report("The previous combined mod was replaced successfully.");
+            return result;
+        }
+        catch
+        {
+            progress?.Report("Rebuild failed; restoring the previous combined mod...");
+            DeleteDirectoryIfExists(outputSource);
+            DeleteDirectoryIfExists(outputRuntime);
+            if (sourceMoved && Directory.Exists(sourceBackup))
+            {
+                Directory.Move(sourceBackup, outputSource);
+            }
+            if (runtimeMoved && Directory.Exists(runtimeBackup))
+            {
+                Directory.Move(runtimeBackup, outputRuntime);
+            }
             throw;
         }
     }
@@ -122,6 +187,35 @@ public sealed class CombineService(
         finally
         {
             if (File.Exists(probe)) File.Delete(probe);
+        }
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        if (!Directory.Exists(path))
+        {
+            return;
+        }
+
+        try
+        {
+            Directory.Delete(path, true);
+        }
+        catch (IOException)
+        {
+            // A successful rebuild remains usable if Windows temporarily retains a backup file handle.
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Leave the uniquely named backup in place rather than failing a completed rebuild.
+        }
+    }
+
+    private static void DeleteDirectoryIfExists(string path)
+    {
+        if (Directory.Exists(path))
+        {
+            Directory.Delete(path, true);
         }
     }
 

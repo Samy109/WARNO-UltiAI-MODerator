@@ -19,7 +19,11 @@ Editable SDK mods and UltiAIDEV remain supported as optional developer workflows
 1. Subscribe to **UltiAI** in the Steam Workshop and let Steam finish downloading it.
 2. Subscribe to the other Workshop mod you want to combine.
 3. Download the release ZIP, extract the entire folder, then run `WARNO-UltiAI-MODerator.exe`. Choose the other mod and the priority UltiAI variant, then preview. Do not run the executable from inside the ZIP.
-4. Click **Create combined mod**. The app creates a local combined mod and verifies every planned output path.
+4. Click **Create as New**. The app creates a local combined mod, verifies every planned output path, and records one compact fingerprint for each source mod.
+
+When you select the same source mods again, the existing progress bar checks their current fingerprints. **Create as New** remains unavailable for an existing combination. If either source has changed, **Update and Rebuild** becomes available and its confirmation lists the affected mods. The previous combined mod is safeguarded during rebuilding and restored automatically if the rebuild fails.
+
+Combined mods made with v1.0.0 under the default generated name are recognized automatically. They require one initial tracked rebuild; manual deletion is not required.
 
 WARNO itself generates the combined mod's local identity and compatibility baseline. The app rejects Workshop payloads whose `ModGenVersion` does not match the installed game, preventing game-room version mismatch packages.
 
@@ -27,7 +31,7 @@ No editable files are needed for the normal Workshop workflow. If you are develo
 
 The app launches without requesting administrator access. If WARNO is installed under `Program Files`, Windows may prevent creation inside `WARNO\Mods`; in that case, close the app, right-click `WARNO-UltiAI-MODerator.exe`, and choose **Run as administrator** before creating the combined mod. The app invokes WARNO's bundled Python creation tool directly.
 
-Inputs are never modified. If generation fails, the incomplete new output is preserved for inspection.
+Inputs are never modified. If initial creation fails, the incomplete new output is preserved for inspection. If an update fails, the last working combined mod is restored.
 
 ## Binary-format limitation
 

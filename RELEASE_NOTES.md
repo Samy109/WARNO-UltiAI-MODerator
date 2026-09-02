@@ -1,3 +1,25 @@
+# WARNO UltiAI MODerator v1.1.0
+
+This release adds streamlined change detection and in-place rebuilding for combined mods.
+
+## Updating combined mods
+
+- Stores one compact SHA-256 fingerprint per source mod; individual filenames are not retained in the combination record.
+- Checks existing combinations automatically using the existing determinate progress bar.
+- Enables **Update and Rebuild** only when at least one selected source mod has changed.
+- Lists the affected source mods in the rebuild confirmation popup.
+- Disables **Create as New** after that source-mod combination has already been created.
+- Safeguards the current source and runtime outputs during rebuilding and restores both automatically if the rebuild fails.
+- Recognizes v1.0.0 combinations that use the default generated name and offers a one-time tracked rebuild instead of requiring manual deletion.
+
+## Interface
+
+- Renames **Create combined mod** to **Create as New**.
+- Reuses the same progress bar for source checking, initial creation, rebuilding, and final verification.
+- Shows concise tooltips explaining why create or update is unavailable.
+
+---
+
 # WARNO UltiAI MODerator v1.0.0
 
 Initial public release, built around the Workshop-first user workflow.
