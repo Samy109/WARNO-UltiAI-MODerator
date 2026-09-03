@@ -59,14 +59,15 @@ public sealed class CombineService(
             ValidateGeneratedCompatibility(request, outputRuntime);
             Report(40, "WARNO generation complete");
 
+            IReadOnlyList<string>? compiledPaths = null;
             if (request.OtherMod.Kind == ModKind.WorkshopCompiled
                 || request.UltiMod.Kind == ModKind.WorkshopCompiled)
             {
                 Log($"Composing compiled payloads with {request.UltiMod.Name} precedence...");
-                ComposeCompiledPayload(request, outputSource, outputRuntime, Log, Report);
+                compiledPaths = ComposeCompiledPayload(request, outputSource, outputRuntime, Log, Report);
             }
 
-            VerifyResult(request, outputSource, outputRuntime, Log, Report);
+            VerifyResult(request, outputSource, outputRuntime, compiledPaths, Log, Report);
             Log("Combination and verification completed successfully.");
             Report(100, "Complete");
             return new CombineResult(outputSource, outputRuntime, logLines.ToArray());
@@ -286,7 +287,7 @@ public sealed class CombineService(
         }
     }
 
-    private void ComposeCompiledPayload(
+    private IReadOnlyList<string> ComposeCompiledPayload(
         CombineRequest request,
         string outputSource,
         string outputRuntime,
@@ -308,6 +309,15 @@ public sealed class CombineService(
 
             var baseFiles = MergePlanner.EnumerateRuntimeFiles(otherRuntimeRoot).ToArray();
             var overlayFiles = MergePlanner.EnumerateUltiOverlayFiles(Path.Combine(priorityRuntimeRoot, "Gen")).ToArray();
+            var expectedFiles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var item in baseFiles)
+            {
+                expectedFiles[item.RelativePath] = item.FullPath;
+            }
+            foreach (var item in overlayFiles)
+            {
+                expectedFiles[item.RelativePath] = item.FullPath;
+            }
             var copyCount = baseFiles.Length + overlayFiles.Length;
             var copied = 0;
 
@@ -338,10 +348,11 @@ public sealed class CombineService(
                 if (File.Exists(priorityCatalog))
                 {
                     FileSystemOps.CopyFileAtomic(priorityCatalog, stagedCatalog);
+                    expectedFiles["Gen\\ResourceFile\\Catalog.cat"] = priorityCatalog;
                 }
             }
 
-            VerifyCompiledPlan(request.Preview, staging, priorityRuntimeRoot, otherRuntimeRoot, report);
+            VerifyCompiledPlan(expectedFiles, staging, report);
 
             if (Directory.Exists(outputGen)) Directory.Move(outputGen, generatedBackup);
             Directory.Move(Path.Combine(staging, "Gen"), outputGen);
@@ -365,6 +376,7 @@ public sealed class CombineService(
 
             SynthesizeConfig(request, outputRuntime);
             log("Base catalog retained; compiled Ulti databases applied afterward.");
+            return expectedFiles.Keys.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray();
         }
         finally
         {
@@ -409,33 +421,29 @@ public sealed class CombineService(
     }
 
     private static void VerifyCompiledPlan(
-        MergePreview preview,
+        IReadOnlyDictionary<string, string> expectedFiles,
         string staging,
-        string priorityRoot,
-        string otherRoot,
         Action<int, string> report)
     {
-        for (var index = 0; index < preview.Decisions.Count; index++)
+        var index = 0;
+        foreach (var expectedFile in expectedFiles.OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase))
         {
-            var decision = preview.Decisions[index];
-            var actual = FileSystemOps.SafeCombine(staging, decision.RelativePath);
+            var actual = FileSystemOps.SafeCombine(staging, expectedFile.Key);
             if (!File.Exists(actual))
             {
-                throw new CombineException($"The staged package is missing {decision.RelativePath}.");
+                throw new CombineException($"The staged package is missing {expectedFile.Key}.");
             }
 
-            var expected = decision.Kind is MergeDecisionKind.UltiOnly or MergeDecisionKind.UltiOverride
-                ? FileSystemOps.SafeCombine(priorityRoot, decision.RelativePath)
-                : FileSystemOps.SafeCombine(otherRoot, decision.RelativePath);
-            if (!File.Exists(expected)
+            if (!File.Exists(expectedFile.Value)
                 || !SourceDeltaAnalyzer.ComputeSha256(actual).Equals(
-                    SourceDeltaAnalyzer.ComputeSha256(expected),
+                    SourceDeltaAnalyzer.ComputeSha256(expectedFile.Value),
                     StringComparison.OrdinalIgnoreCase))
             {
-                throw new CombineException($"Precedence verification failed for {decision.RelativePath}.");
+                throw new CombineException($"Precedence verification failed for {expectedFile.Key}.");
             }
 
-            ReportFileProgress(report, 64, 76, index + 1, preview.Decisions.Count, "Verifying precedence");
+            index++;
+            ReportFileProgress(report, 64, 76, index, expectedFiles.Count, "Verifying precedence");
         }
     }
 
@@ -443,6 +451,7 @@ public sealed class CombineService(
         CombineRequest request,
         string outputSource,
         string outputRuntime,
+        IReadOnlyList<string>? compiledPaths,
         Action<string> log,
         Action<int, string> report)
     {
@@ -484,16 +493,18 @@ public sealed class CombineService(
         }
         else
         {
-            for (var index = 0; index < request.Preview.Decisions.Count; index++)
+            var paths = compiledPaths
+                ?? throw new CombineException("The compiled payload verification plan is missing.");
+            for (var index = 0; index < paths.Count; index++)
             {
-                var decision = request.Preview.Decisions[index];
-                var actual = FileSystemOps.SafeCombine(outputRuntime, decision.RelativePath);
-                VerifySameFile(actual, FileSystemOps.SafeCombine(outputSource, decision.RelativePath), decision.RelativePath);
-                ReportFileProgress(report, 86, 99, index + 1, request.Preview.Decisions.Count, "Final verification");
+                var path = paths[index];
+                var actual = FileSystemOps.SafeCombine(outputRuntime, path);
+                VerifySameFile(actual, FileSystemOps.SafeCombine(outputSource, path), path);
+                ReportFileProgress(report, 86, 99, index + 1, paths.Count, "Final verification");
             }
         }
 
-        log($"Verified {request.Preview.Decisions.Count} merge decisions.");
+        log($"Verified {(compiledPaths?.Count ?? request.Preview.Decisions.Count)} merge decisions.");
     }
 
     private static void ReportFileProgress(

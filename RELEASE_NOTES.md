@@ -1,3 +1,15 @@
+# WARNO UltiAI MODerator v1.1.1
+
+This patch fixes mixed editable/Workshop combinations that could fail verification on stale generated audio files.
+
+## Fixed
+
+- Builds the compiled verification plan from the freshly generated payload instead of an older preview inventory.
+- Prevents false `The staged package is missing` errors for stale voice assets such as `select_19.ess`.
+- Continues to verify every file actually composed into the package, including UltiAI precedence and fallback resource catalogs.
+
+---
+
 # WARNO UltiAI MODerator v1.1.0
 
 This release adds streamlined change detection and in-place rebuilding for combined mods.
