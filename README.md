@@ -21,7 +21,9 @@ Editable SDK mods and UltiAIDEV remain supported as optional developer workflows
 3. Download the release ZIP, extract the entire folder, then run `WARNO-UltiAI-MODerator.exe`. Choose the other mod and the priority UltiAI variant, then preview. Do not run the executable from inside the ZIP.
 4. Click **Create as New**. The app creates a local combined mod, verifies every planned output path, and records one compact fingerprint for each source mod.
 
-When you select the same source mods again, the existing progress bar checks their current fingerprints. **Create as New** remains unavailable for an existing combination. If either source has changed, **Update and Rebuild** becomes available and its confirmation lists the affected mods. The previous combined mod is safeguarded during rebuilding and restored automatically if the rebuild fails.
+When you select the same source mods again, the app checks the installed inputs and existing combined output. A visible status reports detected source updates, missing or altered output, changes to WARNO build data, or a failed check. **Update and Rebuild** is available when sources changed; **Rebuild Existing** remains available even when they did not. **Create as New** stays unavailable for an existing combination.
+
+Rebuilding checks the inputs again and safeguards the previous combination until generation, verification, and saving the update record succeed. If source files or WARNO build data change during the merge, it stops and restores the previous combination. Older records require one rebuild to begin tracking output integrity.
 
 Combined mods made with v1.0.0 under the default generated name are recognized automatically. They require one initial tracked rebuild; manual deletion is not required.
 
@@ -45,6 +47,7 @@ Requires the .NET 9 SDK on Windows when building from source. The release packag
 
 ```powershell
 dotnet build WarnoModerator.sln
+dotnet run --project WarnoModerator.Tests -c Release
 dotnet publish WarnoModerator.App -c Release -r win-x64 --self-contained true
 ```
 

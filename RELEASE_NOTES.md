@@ -1,3 +1,15 @@
+# WARNO UltiAI MODerator v1.2.0
+
+- Rebuild existing combinations even when no source updates are detected—no manual deletion needed.
+- See clear status messages for source updates, missing or changed output, and failed checks.
+- Detect changed WARNO build data and offer a rebuild.
+- Recheck inputs during merging and restore the previous combination if a rebuild fails, including final verification or saving its update record.
+- Preserve compatibility with previously tracked combinations.
+
+Extract the entire Windows ZIP before running the app.
+
+---
+
 # WARNO UltiAI MODerator v1.1.1
 
 This patch fixes mixed editable/Workshop combinations that could fail verification on stale generated audio files.

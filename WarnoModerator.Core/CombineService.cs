@@ -9,7 +9,8 @@ public sealed class CombineService(
         IProgress<string>? progress = null,
         CancellationToken cancellationToken = default,
         IProgress<CombineProgress>? operationProgress = null,
-        bool preserveIncompleteOutput = true)
+        bool preserveIncompleteOutput = true,
+        Func<CombineResult, Task>? finalize = null)
     {
         var logLines = new List<string>();
         void Log(string line)
@@ -68,9 +69,12 @@ public sealed class CombineService(
             }
 
             VerifyResult(request, outputSource, outputRuntime, compiledPaths, Log, Report);
+            Report(99, "Checking inputs and recording result");
+            var result = new CombineResult(outputSource, outputRuntime, logLines.ToArray());
+            if (finalize is not null) await finalize(result).ConfigureAwait(false);
             Log("Combination and verification completed successfully.");
             Report(100, "Complete");
-            return new CombineResult(outputSource, outputRuntime, logLines.ToArray());
+            return result;
         }
         catch
         {
@@ -85,7 +89,8 @@ public sealed class CombineService(
         CombineRequest request,
         IProgress<string>? progress = null,
         CancellationToken cancellationToken = default,
-        IProgress<CombineProgress>? operationProgress = null)
+        IProgress<CombineProgress>? operationProgress = null,
+        Func<CombineResult, Task>? finalize = null)
     {
         var outputSource = Path.Combine(request.Paths.ModsRoot, request.OutputName);
         var outputRuntime = Path.Combine(request.Paths.SavedModsRoot, request.OutputName);
@@ -97,6 +102,8 @@ public sealed class CombineService(
         VerifyModDirectoryWritable(request.Paths.ModsRoot);
         var sourceBackup = outputSource + ".warno-moderator-backup-" + Guid.NewGuid().ToString("N");
         var runtimeBackup = outputRuntime + ".warno-moderator-backup-" + Guid.NewGuid().ToString("N");
+        var sourceExisted = Directory.Exists(outputSource);
+        var runtimeExisted = Directory.Exists(outputRuntime);
         var sourceMoved = false;
         var runtimeMoved = false;
 
@@ -119,7 +126,8 @@ public sealed class CombineService(
                 progress,
                 cancellationToken,
                 operationProgress,
-                preserveIncompleteOutput: false).ConfigureAwait(false);
+                preserveIncompleteOutput: false,
+                finalize: finalize).ConfigureAwait(false);
 
             TryDeleteDirectory(sourceBackup);
             TryDeleteDirectory(runtimeBackup);
@@ -129,8 +137,8 @@ public sealed class CombineService(
         catch
         {
             progress?.Report("Rebuild failed; restoring the previous combined mod...");
-            DeleteDirectoryIfExists(outputSource);
-            DeleteDirectoryIfExists(outputRuntime);
+            if (sourceMoved || !sourceExisted) DeleteDirectoryIfExists(outputSource);
+            if (runtimeMoved || !runtimeExisted) DeleteDirectoryIfExists(outputRuntime);
             if (sourceMoved && Directory.Exists(sourceBackup))
             {
                 Directory.Move(sourceBackup, outputSource);

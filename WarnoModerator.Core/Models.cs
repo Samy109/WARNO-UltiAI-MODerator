@@ -95,7 +95,9 @@ public sealed record CombinedModState(
     int SchemaVersion,
     string OutputName,
     SourceModFingerprint OtherMod,
-    SourceModFingerprint PriorityMod)
+    SourceModFingerprint PriorityMod,
+    string? RuntimeFingerprint = null,
+    string? GameFingerprint = null)
 {
     public const int CurrentSchemaVersion = 1;
 }

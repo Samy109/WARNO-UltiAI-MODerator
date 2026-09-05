@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using WarnoModerator.Core;
 
 namespace WarnoModerator.App;
@@ -19,9 +20,10 @@ public partial class MainWindow : Window
     private bool _busy;
     private int _selectionRevision;
     private CombinedModState? _existingCombination;
-    private IReadOnlyList<SourceModFingerprint>? _currentFingerprints;
     private IReadOnlyList<string> _changedMods = [];
     private bool _legacyCombination;
+    private string _status = "Select two mods to combine.";
+    private readonly CombinationHealth _health = new();
 
     public MainWindow() => InitializeComponent();
 
@@ -58,6 +60,7 @@ public partial class MainWindow : Window
         {
             _paths = new WarnoLocator().FromWarnoRoot(WarnoPathBox.Text.Trim());
             var mods = _scanner.Scan(_paths);
+            _settingName = true;
             OtherModBox.ItemsSource = mods.Where(m => !IsUlti(m)).ToList();
             var priorityMods = mods
                 .Where(IsUlti)
@@ -67,11 +70,14 @@ public partial class MainWindow : Window
             UltiModBox.ItemsSource = priorityMods;
             OtherModBox.SelectedIndex = OtherModBox.Items.Count > 0 ? 0 : -1;
             UltiModBox.SelectedIndex = UltiModBox.Items.Count > 0 ? 0 : -1;
+            _settingName = false;
+            Selection_Changed(this, new SelectionChangedEventArgs(Selector.SelectionChangedEvent, Array.Empty<object>(), Array.Empty<object>()));
             Log($"Found {mods.Count(m => m.Kind == ModKind.EditableSource)} editable and {mods.Count(m => m.Kind == ModKind.WorkshopCompiled)} Workshop mods.");
             if (priorityMods.Count > 0) Log("Priority choices: " + string.Join(", ", priorityMods.Select(m => m.Name)) + ".");
             if (UltiModBox.Items.Count == 0) Log("No installed UltiAI/UltiAIDEV Workshop or editable mod was found.");
         }
         catch (Exception ex) { ShowError(ex); }
+        finally { _settingName = false; }
     }
 
     private async void Selection_Changed(object sender, SelectionChangedEventArgs e)
@@ -80,8 +86,8 @@ public partial class MainWindow : Window
         var revision = ++_selectionRevision;
         _existingCombination = _paths is null ? null : _stateStore.FindForSources(_paths, other, ulti);
         _legacyCombination = false;
-        _currentFingerprints = null;
         _changedMods = [];
+        _status = "Ready to create a new combination.";
         var defaultOutputName = $"{other.Name} + {ulti.Name}";
         if (_existingCombination is null && _paths is not null)
         {
@@ -118,17 +124,25 @@ public partial class MainWindow : Window
                 fingerprintProgress));
             if (revision != _selectionRevision) return;
 
-            _currentFingerprints = fingerprints;
             var changed = new List<string>();
             if (!CombinedModStateStore.FingerprintMatches(_existingCombination.OtherMod, fingerprints[0]))
                 changed.Add(other.Name);
             if (!CombinedModStateStore.FingerprintMatches(_existingCombination.PriorityMod, fingerprints[1]))
                 changed.Add(ulti.Name);
             _changedMods = changed;
+            var healthStatus = await Task.Run(() => _health.CheckAsync(_paths!, _existingCombination));
+            if (revision != _selectionRevision) return;
+            _status = (changed.Count > 0
+                ? "Changed: " + string.Join(", ", changed) + ". "
+                : "Installed source files match the last merge. ") + healthStatus;
         }
         catch (Exception ex)
         {
-            if (revision == _selectionRevision) ShowError(ex);
+            if (revision == _selectionRevision)
+            {
+                _status = "Source or output check failed. Rebuild will retry: " + ex.Message;
+                ShowError(ex);
+            }
         }
         finally
         {
@@ -150,6 +164,11 @@ public partial class MainWindow : Window
     {
         if (_paths is null || OtherModBox.SelectedItem is not ModDescriptor other || UltiModBox.SelectedItem is not ModDescriptor ulti)
             throw new CombineException("Select both a mod and an UltiAI priority variant.");
+        var installed = _scanner.Scan(_paths);
+        other = installed.FirstOrDefault(mod => mod.RootPath.Equals(other.RootPath, StringComparison.OrdinalIgnoreCase))
+            ?? throw new CombineException("The selected base mod is no longer installed. Refresh mods.");
+        ulti = installed.FirstOrDefault(mod => mod.RootPath.Equals(ulti.RootPath, StringComparison.OrdinalIgnoreCase))
+            ?? throw new CombineException("The selected priority mod is no longer installed. Refresh mods.");
         var preview = _planner.CreatePreview(_paths, other, ulti, OutputNameBox.Text.Trim(), allowExistingOutput);
         return new CombineRequest(_paths, other, ulti, OutputNameBox.Text.Trim(), preview);
     }
@@ -190,15 +209,16 @@ public partial class MainWindow : Window
             var fingerprints = await Task.Run(() => _fingerprintService.ComputeAsync(
                 [request.OtherMod, request.UltiMod],
                 fingerprintProgress));
+            var gameFingerprint = await Task.Run(() => _health.GameHash(request.Paths));
+            CombinedModState? state = null;
             var result = await _combineService.CombineAsync(
                 request,
                 new Progress<string>(Log),
                 operationProgress: new Progress<CombineProgress>(progress => UpdateProgress(new CombineProgress(
                     10 + (int)Math.Round(progress.Percent * 0.9),
-                    progress.Stage))));
-            var state = CreateState(request, fingerprints);
-            _stateStore.Save(result.OutputSourcePath, state);
-            SetCompletedState(state, fingerprints);
+                    progress.Stage))),
+                finalize: async result => state = await FinalizeAsync(request, fingerprints, gameFingerprint, result));
+            SetCompletedState(state!);
             Log($"DONE: {result.OutputSourcePath}");
             MessageBox.Show($"Combined mod created successfully.\n\n{result.OutputSourcePath}", "WARNO UltiAI MODerator", MessageBoxButton.OK, MessageBoxImage.Information);
             Process.Start(new ProcessStartInfo("explorer.exe", result.OutputSourcePath) { UseShellExecute = true });
@@ -209,7 +229,7 @@ public partial class MainWindow : Window
 
     private async void Update_Click(object sender, RoutedEventArgs e)
     {
-        if (_existingCombination is null || _currentFingerprints is null || _changedMods.Count == 0)
+        if (_existingCombination is null)
         {
             return;
         }
@@ -221,7 +241,7 @@ public partial class MainWindow : Window
             var changeStatus = _legacyCombination ? "Needs initial tracked rebuild" : "Updated";
             var changedList = string.Join(Environment.NewLine, _changedMods.Select(name => $"• {name} — {changeStatus}"));
             if (MessageBox.Show(
-                    $"Changes were detected in:{Environment.NewLine}{Environment.NewLine}{changedList}{Environment.NewLine}{Environment.NewLine}Update and rebuild '{request.OutputName}'?",
+                    $"{(_changedMods.Count > 0 ? "Changes detected:" + Environment.NewLine + changedList : _status)}{Environment.NewLine}{Environment.NewLine}Rebuild '{request.OutputName}'?",
                     "Update and Rebuild",
                     MessageBoxButton.OKCancel,
                     MessageBoxImage.Question) != MessageBoxResult.OK)
@@ -229,14 +249,16 @@ public partial class MainWindow : Window
                 return;
             }
 
-            SetBusy(true, "Preparing rebuild");
+            SetBusy(true, "Checking source mods");
+            var fingerprints = await Task.Run(() => _fingerprintService.ComputeAsync([request.OtherMod, request.UltiMod]));
+            var gameFingerprint = await Task.Run(() => _health.GameHash(request.Paths));
+            CombinedModState? state = null;
             var result = await _combineService.RebuildAsync(
                 request,
                 new Progress<string>(Log),
-                operationProgress: new Progress<CombineProgress>(UpdateProgress));
-            var state = CreateState(request, _currentFingerprints);
-            _stateStore.Save(result.OutputSourcePath, state);
-            SetCompletedState(state, _currentFingerprints);
+                operationProgress: new Progress<CombineProgress>(UpdateProgress),
+                finalize: async result => state = await FinalizeAsync(request, fingerprints, gameFingerprint, result));
+            SetCompletedState(state!);
             Log($"DONE: {result.OutputSourcePath}");
             MessageBox.Show(
                 $"Combined mod updated and rebuilt successfully.\n\n{result.OutputSourcePath}",
@@ -249,23 +271,25 @@ public partial class MainWindow : Window
         finally { SetBusy(false); }
     }
 
-    private static CombinedModState CreateState(
-        CombineRequest request,
-        IReadOnlyList<SourceModFingerprint> fingerprints) =>
-        new(
-            CombinedModState.CurrentSchemaVersion,
-            request.OutputName,
-            fingerprints[0],
-            fingerprints[1]);
+    private async Task<CombinedModState> FinalizeAsync(CombineRequest request,
+        IReadOnlyList<SourceModFingerprint> before, string gameFingerprint, CombineResult result)
+    {
+        var after = await _fingerprintService.ComputeAsync([request.OtherMod, request.UltiMod]);
+        CombinationHealth.VerifyInputs(before, after);
+        if (_health.GameHash(request.Paths) != gameFingerprint)
+            throw new CombineException("WARNO build data changed during the merge. Let Steam finish updating, then retry.");
+        var state = new CombinedModState(CombinedModState.CurrentSchemaVersion, request.OutputName,
+            after[0], after[1], await _health.RuntimeHashAsync(result.OutputRuntimePath), gameFingerprint);
+        _stateStore.Save(result.OutputSourcePath, state);
+        return state;
+    }
 
-    private void SetCompletedState(
-        CombinedModState state,
-        IReadOnlyList<SourceModFingerprint> fingerprints)
+    private void SetCompletedState(CombinedModState state)
     {
         _existingCombination = state;
-        _currentFingerprints = fingerprints;
         _changedMods = [];
         _legacyCombination = false;
+        _status = "Combined mod verified. You can rebuild again whenever needed.";
     }
 
     private void SetBusy(bool busy, string stage = "Preparing")
@@ -294,7 +318,10 @@ public partial class MainWindow : Window
 
         PreviewButton.IsEnabled = !_busy && hasSelection;
         CombineButton.IsEnabled = !_busy && hasSelection && _existingCombination is null && !outputExists;
-        UpdateButton.IsEnabled = !_busy && _existingCombination is not null && _changedMods.Count > 0;
+        UpdateButton.IsEnabled = CombinationHealth.CanRebuild(_busy, hasSelection, _existingCombination is not null);
+        UpdateButton.Content = _changedMods.Count > 0 ? "Update and Rebuild" : "Rebuild Existing";
+        StatusText.Text = _status;
+        StatusText.Visibility = _busy ? Visibility.Collapsed : Visibility.Visible;
         OutputNameBox.IsEnabled = !_busy && _existingCombination is null;
 
         CombineButton.ToolTip = _existingCombination is not null
@@ -307,7 +334,7 @@ public partial class MainWindow : Window
         else if (_legacyCombination)
             UpdateButton.ToolTip = "This existing combined mod needs one tracked rebuild.";
         else if (_changedMods.Count == 0)
-            UpdateButton.ToolTip = "The source mods have not changed.";
+            UpdateButton.ToolTip = "Rebuild and verify this combination using the installed source mods.";
         else
             UpdateButton.ToolTip = "Changed: " + string.Join(", ", _changedMods);
     }
