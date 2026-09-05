@@ -11,7 +11,7 @@ Editable SDK mods and UltiAIDEV remain supported as optional developer workflows
 - Workshop + Workshop UltiAI: WARNO first generates a current local-mod compatibility manifest, then both installed compiled payloads are composed directly. No editable source is required.
 - Editable + editable UltiAI: each mod is compared with its matching `base.zip`. Only changed source files are applied, and the complete UltiAI file wins when both mods changed the same path.
 - Mixed source/Workshop combinations are also supported; the editable side is generated before compiled composition.
-- Compiled `.ndfbin` databases are atomic. They cannot safely be decompiled and merged object-by-object, so an overlapping database is replaced as a whole by UltiAI. The preview explicitly reports these collisions.
+- Compiled `.ndfbin` databases are atomic. They cannot safely be decompiled and merged object-by-object, so an overlapping database is replaced as a whole by UltiAI, except `Gen/NDF/UI/Components.ndfbin`, which comes from the other mod when both provide it. The preview explicitly reports these collisions.
 - Workshop packages with a different `ModGenVersion` are rejected rather than producing a likely broken mod.
 
 ## Use
@@ -37,7 +37,9 @@ Inputs are never modified. If initial creation fails, the incomplete new output 
 
 ## Binary-format limitation
 
-Workshop `.ndfbin` databases and `Catalog.cat` files are compiled, atomic files; WARNO supplies no supported object-level merger for them. When both mods contain the same NDF database, the complete UltiAI database replaces the Workshop database. This guarantees UltiAI precedence but necessarily removes the other mod's changes inside that same database.
+Workshop `.ndfbin` databases and `Catalog.cat` files are compiled, atomic files; WARNO supplies no supported object-level merger for them. When both mods contain the same NDF database, the complete UltiAI database replaces the Workshop database, except `UI/Components.ndfbin`. For that UI database, the other mod takes precedence to preserve its custom interface and texture registrations. If only UltiAI supplies it, UltiAI's version is retained. The compatibility manifest follows the selected UI payload.
+
+Combined mods may retain vanilla end-game difficulty labels. Additional roles such as Siege require an end-game summary playtest with the other mod's UI. Rebuild existing combinations after installing the revised v1.2.0 package.
 
 For Workshop packages with custom assets, the Workshop `Catalog.cat` is retained so those assets remain registered. Catalog binaries cannot be safely combined, so UltiAI assets that exist only through its own catalog (typically cosmetic branding) may not appear. The application reports this before execution. Gameplay NDF precedence is unaffected.
 

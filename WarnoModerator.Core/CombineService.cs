@@ -316,7 +316,11 @@ public sealed class CombineService(
                 : outputSource;
 
             var baseFiles = MergePlanner.EnumerateRuntimeFiles(otherRuntimeRoot).ToArray();
-            var overlayFiles = MergePlanner.EnumerateUltiOverlayFiles(Path.Combine(priorityRuntimeRoot, "Gen")).ToArray();
+            var basePaths = baseFiles.Select(x => x.RelativePath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var preserveOtherComponents = baseFiles.Any(x => MergePlanner.IsUiComponents(x.RelativePath));
+            var overlayFiles = MergePlanner.EnumerateUltiOverlayFiles(Path.Combine(priorityRuntimeRoot, "Gen"))
+                .Where(x => !MergePlanner.IsUiComponents(x.RelativePath) || !basePaths.Contains(x.RelativePath))
+                .ToArray();
             var expectedFiles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var item in baseFiles)
             {
@@ -382,8 +386,10 @@ public sealed class CombineService(
             FileSystemOps.CopyDirectory(outputGen, runtimeGen);
             report(85, "Writing compatibility manifest");
 
-            SynthesizeConfig(request, outputRuntime);
-            log("Base catalog retained; compiled Ulti databases applied afterward.");
+            SynthesizeConfig(request, outputRuntime, preserveOtherComponents);
+            log(preserveOtherComponents
+                ? "Other mod UI components and base catalog retained; Ulti precedence applied to remaining compiled databases."
+                : "Base catalog retained; compiled Ulti databases applied afterward.");
             return expectedFiles.Keys.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray();
         }
         finally
@@ -393,7 +399,7 @@ public sealed class CombineService(
         }
     }
 
-    private static void SynthesizeConfig(CombineRequest request, string outputRuntime)
+    private static void SynthesizeConfig(CombineRequest request, string outputRuntime, bool preserveOtherComponents)
     {
         var outputConfigPath = Path.Combine(outputRuntime, "Config.ini");
         Directory.CreateDirectory(outputRuntime);
@@ -423,6 +429,11 @@ public sealed class CombineService(
         foreach (var pair in request.UltiMod.ConfigKeys)
         {
             output.Set("Config", pair.Key, pair.Value);
+        }
+
+        if (preserveOtherComponents && request.OtherMod.ConfigKeys.TryGetValue("UI/Components", out var componentsFingerprint))
+        {
+            output.Set("Config", "UI/Components", componentsFingerprint);
         }
 
         output.Save(outputConfigPath);

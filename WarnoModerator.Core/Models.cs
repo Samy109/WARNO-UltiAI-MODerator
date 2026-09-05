@@ -18,7 +18,8 @@ public enum MergeDecisionKind
     OtherOnly,
     UltiOnly,
     UltiOverride,
-    Delete
+    Delete,
+    OtherOverride
 }
 
 public sealed record WarnoPaths(
@@ -68,7 +69,7 @@ public sealed record MergePreview(
     bool CanExecute)
 {
     public int OverrideCount => Decisions.Count(x => x.Kind == MergeDecisionKind.UltiOverride);
-    public int OtherCount => Decisions.Count(x => x.Kind == MergeDecisionKind.OtherOnly);
+    public int OtherCount => Decisions.Count(x => x.Kind is MergeDecisionKind.OtherOnly or MergeDecisionKind.OtherOverride);
     public int UltiCount => Decisions.Count(x => x.Kind == MergeDecisionKind.UltiOnly);
 }
 

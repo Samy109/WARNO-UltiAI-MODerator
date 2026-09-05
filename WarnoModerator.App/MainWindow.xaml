@@ -11,7 +11,7 @@
         </Grid.RowDefinitions>
         <StackPanel Grid.Row="0" Margin="0,0,0,14">
             <TextBlock Text="WARNO UltiAI MODerator" FontSize="28" FontWeight="Bold" Foreground="#DDE5C5"/>
-            <TextBlock Text="Combine installed Steam Workshop mods directly. UltiAI always wins overlapping compiled databases." Foreground="{StaticResource MutedBrush}" Margin="0,4,0,0"/>
+            <TextBlock Text="Combine installed Steam Workshop mods directly. UltiAI takes precedence; the other mod keeps its UI components when both provide them." Foreground="{StaticResource MutedBrush}" Margin="0,4,0,0"/>
         </StackPanel>
         <Border Grid.Row="1" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="7" Padding="15" Margin="0,0,0,12">
             <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>

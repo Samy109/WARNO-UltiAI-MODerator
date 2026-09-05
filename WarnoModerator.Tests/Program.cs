@@ -58,6 +58,49 @@ try
     await service.RebuildAsync(request);
     Check(File.ReadAllText(Path.Combine(runtime, "Gen", "NDF", "data.ndfbin")) == "version2", "successful rebuild uses updated input");
     Check(!Directory.EnumerateDirectories(paths.ModsRoot).Any(p => p.Contains("backup-")), "successful rebuild removes backup");
+    // Compiled UI collisions preserve the other mod's texture bank and its manifest.
+    var other = mod with { Name = "Spearhead", RootPath = Path.Combine(root, "spearhead"),
+        ConfigKeys = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["UI/Components"] = "spearhead-ui", ["GFX/Skirmish"] = "spearhead-ai" } };
+    var ulti = mod with { Name = "UltiAI", ConfigKeys = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        { ["UI/Components"] = "ulti-ui", ["GFX/Skirmish"] = "ulti-ai" } };
+    var components = Path.Combine("Gen", "NDF", "UI", "Components.ndfbin");
+    var ai = Path.Combine("Gen", "NDF", "GFX", "Skirmish.ndfbin");
+    Write(Path.Combine(other.RootPath, components), "Texture_Division_Emblem_US_10th_SFG");
+    Write(Path.Combine(ulti.RootPath, components), "Ulti role labels");
+    Write(Path.Combine(other.RootPath, ai), "other AI");
+    Write(Path.Combine(ulti.RootPath, ai), "Ulti AI");
+    var planner = new MergePlanner(new SourceDeltaAnalyzer());
+    var preview = planner.CreatePreview(paths, other, ulti, "Combined", allowExistingOutput: true);
+    Check(preview.Decisions.Single(x => x.RelativePath == components).Kind == MergeDecisionKind.OtherOverride,
+        "preview retains other UI components");
+    Check(preview.Decisions.Single(x => x.RelativePath == ai).Kind == MergeDecisionKind.UltiOverride,
+        "preview keeps Ulti gameplay precedence");
+    Check(preview.Warnings.Any(x => x.Contains("Siege")), "preview explains end-game role limitation");
+    var uiRequest = new CombineRequest(paths, other, ulti, "Combined", preview);
+    await service.RebuildAsync(uiRequest);
+    Check(File.ReadAllText(Path.Combine(runtime, components)) == "Texture_Division_Emblem_US_10th_SFG",
+        "compiled output retains custom division emblem");
+    Check(File.ReadAllText(Path.Combine(source, components)) == File.ReadAllText(Path.Combine(runtime, components)),
+        "source and runtime UI components agree");
+    Check(File.ReadAllText(Path.Combine(runtime, ai)) == "Ulti AI", "actual gameplay output still uses Ulti AI");
+    var mergedConfig = IniDocument.Load(Path.Combine(runtime, "Config.ini"));
+    Check(mergedConfig.Get("Config", "UI/Components") == "spearhead-ui", "UI fingerprint follows other payload");
+    Check(mergedConfig.Get("Config", "GFX/Skirmish") == "ulti-ai", "gameplay fingerprint follows Ulti payload");
+    Check(File.ReadAllText(Path.Combine(ulti.RootPath, components)) == "Ulti role labels", "input UI remains untouched");
+    File.Delete(Path.Combine(other.RootPath, components));
+    preview = planner.CreatePreview(paths, other, ulti, "Combined", allowExistingOutput: true);
+    Check(preview.Decisions.Single(x => x.RelativePath == components).Kind == MergeDecisionKind.UltiOnly,
+        "Ulti UI remains when other has none");
+    await service.RebuildAsync(uiRequest with { Preview = preview });
+    Check(File.ReadAllText(Path.Combine(runtime, components)) == "Ulti role labels", "Ulti-only UI is copied");
+    Check(IniDocument.Load(Path.Combine(runtime, "Config.ini")).Get("Config", "UI/Components") == "ulti-ui",
+        "Ulti-only UI uses Ulti fingerprint even if other has stale key");
+    Write(Path.Combine(other.RootPath, components), "other-only UI");
+    File.Delete(Path.Combine(ulti.RootPath, components));
+    await service.RebuildAsync(uiRequest);
+    Check(File.ReadAllText(Path.Combine(runtime, components)) == "other-only UI", "other-only UI remains");
+    Check(IniDocument.Load(Path.Combine(runtime, "Config.ini")).Get("Config", "UI/Components") == "spearhead-ui",
+        "other-only UI fingerprint resists stale Ulti key");
     Console.WriteLine($"{checks} regression checks passed.");
 }
 finally { Directory.Delete(root, true); }

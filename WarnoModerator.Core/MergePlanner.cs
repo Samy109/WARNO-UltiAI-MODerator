@@ -113,6 +113,9 @@ public sealed class MergePlanner(SourceDeltaAnalyzer deltaAnalyzer)
         return decisions;
     }
 
+    internal static bool IsUiComponents(string relativePath) =>
+        relativePath.Replace('/', '\\').Equals("Gen\\NDF\\UI\\Components.ndfbin", StringComparison.OrdinalIgnoreCase);
+
     private static IReadOnlyList<MergeDecision> PlanCompiledMerge(
         WarnoPaths paths,
         ModDescriptor other,
@@ -155,7 +158,16 @@ public sealed class MergePlanner(SourceDeltaAnalyzer deltaAnalyzer)
         {
             var hasOther = otherFiles.ContainsKey(path);
             var hasUlti = ultiFiles.ContainsKey(path);
-            if (hasOther && hasUlti)
+            if (hasOther && hasUlti && IsUiComponents(path))
+            {
+                decisions.Add(new MergeDecision(
+                    path,
+                    MergeDecisionKind.OtherOverride,
+                    other.Name,
+                    "The other mod's UI components are retained to preserve its custom interface and texture registrations."));
+                warnings.Add("The other mod's UI components take precedence. UltiAI end-game role labels may be unavailable; test the summary screen when using additional AI roles such as Siege.");
+            }
+            else if (hasOther && hasUlti)
             {
                 decisions.Add(new MergeDecision(
                     path,

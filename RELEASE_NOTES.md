@@ -1,6 +1,10 @@
 # WARNO UltiAI MODerator v1.2.0
 
-- Rebuild existing combinations even when no source updates are detected—no manual deletion needed.
+- Preserve the other mod's UI components when both mods supply them, protecting custom division emblem registrations such as Spearhead Reforged's.
+- Keep UltiAI precedence for remaining compiled databases; use UltiAI UI components when the other mod has none.
+- Align merge previews, output verification, and compatibility entries with the selected UI components.
+- Rebuild existing combinations after installing this replacement v1.2.0 ZIP. End-game labels may use the other mod's defaults; additional roles such as Siege still need an end-game playtest.
+- Rebuild existing combinations even when no source updates are detectedâ€”no manual deletion needed.
 - See clear status messages for source updates, missing or changed output, and failed checks.
 - Detect changed WARNO build data and offer a rebuild.
 - Recheck inputs during merging and restore the previous combination if a rebuild fails, including final verification or saving its update record.
