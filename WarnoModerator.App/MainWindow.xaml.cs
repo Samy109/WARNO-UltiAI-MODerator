@@ -80,41 +80,61 @@ public partial class MainWindow : Window
         finally { _settingName = false; }
     }
 
-    private async void Selection_Changed(object sender, SelectionChangedEventArgs e)
+    private void Selection_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (_settingName || OtherModBox.SelectedItem is not ModDescriptor other || UltiModBox.SelectedItem is not ModDescriptor ulti) return;
-        var revision = ++_selectionRevision;
-        _existingCombination = _paths is null ? null : _stateStore.FindForSources(_paths, other, ulti);
-        _legacyCombination = false;
-        _changedMods = [];
-        _status = "Ready to create a new combination.";
         var defaultOutputName = $"{other.Name} + {ulti.Name}";
-        if (_existingCombination is null && _paths is not null)
+        var existing = _paths is null
+            ? new List<CombinedModState>()
+            : _stateStore.FindAllForSources(_paths, other, ulti).ToList();
+        if (_paths is not null && !existing.Any(state => state.OutputName.Equals(defaultOutputName, StringComparison.OrdinalIgnoreCase)))
         {
             var sourceOutput = Path.Combine(_paths.ModsRoot, defaultOutputName);
             var runtimeOutput = Path.Combine(_paths.SavedModsRoot, defaultOutputName);
             if (Directory.Exists(sourceOutput) || Directory.Exists(runtimeOutput))
             {
-                _legacyCombination = true;
-                _existingCombination = new CombinedModState(
+                existing.Add(new CombinedModState(
                     CombinedModState.CurrentSchemaVersion,
                     defaultOutputName,
                     new SourceModFingerprint(other.Name, other.RootPath, string.Empty),
-                    new SourceModFingerprint(ulti.Name, ulti.RootPath, string.Empty));
+                    new SourceModFingerprint(ulti.Name, ulti.RootPath, string.Empty)));
             }
         }
         _settingName = true;
-        OutputNameBox.Text = _existingCombination?.OutputName ?? defaultOutputName;
+        ExistingMergeBox.ItemsSource = existing.OrderBy(state => state.OutputName, StringComparer.OrdinalIgnoreCase).ToList();
+        ExistingMergeBox.SelectedItem = existing.FirstOrDefault(state => state.OutputName.Equals(defaultOutputName, StringComparison.OrdinalIgnoreCase))
+            ?? existing.FirstOrDefault();
+        OutputNameBox.Text = _paths is null ? defaultOutputName : CombinedModStateStore.SuggestNewOutputName(_paths, defaultOutputName);
         _settingName = false;
         PreviewGrid.ItemsSource = null;
         SummaryText.Text = string.Empty;
+        ExistingMerge_Changed(sender, e);
+    }
 
-        if (_existingCombination is null)
+    private async void ExistingMerge_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_settingName) return;
+        var revision = ++_selectionRevision;
+        _existingCombination = ExistingMergeBox.SelectedItem as CombinedModState;
+        _legacyCombination = _existingCombination is not null
+            && _existingCombination.OtherMod.Fingerprint.Length == 0;
+        _changedMods = [];
+        _status = _existingCombination is null
+            ? "Ready to create a new combination."
+            : "Checking the selected existing merge.";
+        PreviewGrid.ItemsSource = null;
+        SummaryText.Text = string.Empty;
+
+        if (_existingCombination is null || _paths is null
+            || OtherModBox.SelectedItem is not ModDescriptor other
+            || UltiModBox.SelectedItem is not ModDescriptor ulti)
         {
             UpdateActionStates();
             return;
         }
 
+        var selected = _existingCombination;
+        var paths = _paths;
         try
         {
             SetBusy(true, "Checking source mods");
@@ -125,12 +145,12 @@ public partial class MainWindow : Window
             if (revision != _selectionRevision) return;
 
             var changed = new List<string>();
-            if (!CombinedModStateStore.FingerprintMatches(_existingCombination.OtherMod, fingerprints[0]))
+            if (!CombinedModStateStore.FingerprintMatches(selected.OtherMod, fingerprints[0]))
                 changed.Add(other.Name);
-            if (!CombinedModStateStore.FingerprintMatches(_existingCombination.PriorityMod, fingerprints[1]))
+            if (!CombinedModStateStore.FingerprintMatches(selected.PriorityMod, fingerprints[1]))
                 changed.Add(ulti.Name);
             _changedMods = changed;
-            var healthStatus = await Task.Run(() => _health.CheckAsync(_paths!, _existingCombination));
+            var healthStatus = await Task.Run(() => _health.CheckAsync(paths, selected));
             if (revision != _selectionRevision) return;
             _status = (changed.Count > 0
                 ? "Changed: " + string.Join(", ", changed) + ". "
@@ -160,7 +180,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private CombineRequest GetRequest(bool allowExistingOutput = false)
+    private CombineRequest GetRequest(bool rebuild = false)
     {
         if (_paths is null || OtherModBox.SelectedItem is not ModDescriptor other || UltiModBox.SelectedItem is not ModDescriptor ulti)
             throw new CombineException("Select both a mod and an UltiAI priority variant.");
@@ -169,8 +189,11 @@ public partial class MainWindow : Window
             ?? throw new CombineException("The selected base mod is no longer installed. Refresh mods.");
         ulti = installed.FirstOrDefault(mod => mod.RootPath.Equals(ulti.RootPath, StringComparison.OrdinalIgnoreCase))
             ?? throw new CombineException("The selected priority mod is no longer installed. Refresh mods.");
-        var preview = _planner.CreatePreview(_paths, other, ulti, OutputNameBox.Text.Trim(), allowExistingOutput);
-        return new CombineRequest(_paths, other, ulti, OutputNameBox.Text.Trim(), preview);
+        if (rebuild && _existingCombination is null)
+            throw new CombineException("Select an existing merge to rebuild.");
+        var outputName = rebuild ? _existingCombination!.OutputName : OutputNameBox.Text.Trim();
+        var preview = _planner.CreatePreview(_paths, other, ulti, outputName, rebuild);
+        return new CombineRequest(_paths, other, ulti, outputName, preview);
     }
 
     private MergePreview Preview()
@@ -236,7 +259,7 @@ public partial class MainWindow : Window
 
         try
         {
-            var request = GetRequest(true);
+            var request = GetRequest(rebuild: true);
             DisplayPreview(request.Preview);
             var changeStatus = _legacyCombination ? "Needs initial tracked rebuild" : "Updated";
             var changedList = string.Join(Environment.NewLine, _changedMods.Select(name => $"• {name} — {changeStatus}"));
@@ -290,6 +313,18 @@ public partial class MainWindow : Window
         _changedMods = [];
         _legacyCombination = false;
         _status = "Combined mod verified. You can rebuild again whenever needed.";
+        var choices = (ExistingMergeBox.ItemsSource as IEnumerable<CombinedModState> ?? [])
+            .Where(choice => !choice.OutputName.Equals(state.OutputName, StringComparison.OrdinalIgnoreCase))
+            .Append(state)
+            .OrderBy(choice => choice.OutputName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        _settingName = true;
+        ExistingMergeBox.ItemsSource = choices;
+        ExistingMergeBox.SelectedItem = state;
+        if (_paths is not null && OtherModBox.SelectedItem is ModDescriptor other && UltiModBox.SelectedItem is ModDescriptor ulti)
+            OutputNameBox.Text = CombinedModStateStore.SuggestNewOutputName(_paths, $"{other.Name} + {ulti.Name}");
+        _settingName = false;
+        UpdateActionStates();
     }
 
     private void SetBusy(bool busy, string stage = "Preparing")
@@ -302,6 +337,7 @@ public partial class MainWindow : Window
         WarnoPathBox.IsEnabled = !busy;
         OtherModBox.IsEnabled = !busy;
         UltiModBox.IsEnabled = !busy;
+        ExistingMergeBox.IsEnabled = !busy && ExistingMergeBox.Items.Count > 0;
         UpdateActionStates();
         System.Windows.Input.Mouse.OverrideCursor = busy ? System.Windows.Input.Cursors.Wait : null;
     }
@@ -312,23 +348,20 @@ public partial class MainWindow : Window
             && OtherModBox.SelectedItem is ModDescriptor
             && UltiModBox.SelectedItem is ModDescriptor;
         var outputName = OutputNameBox.Text.Trim();
-        var outputExists = _paths is not null
-            && (Directory.Exists(Path.Combine(_paths.ModsRoot, outputName))
-                || Directory.Exists(Path.Combine(_paths.SavedModsRoot, outputName)));
+        var outputExists = _paths is not null && !string.IsNullOrWhiteSpace(outputName)
+            && CombinedModStateStore.OutputExists(_paths, outputName);
 
         PreviewButton.IsEnabled = !_busy && hasSelection;
-        CombineButton.IsEnabled = !_busy && hasSelection && _existingCombination is null && !outputExists;
+        CombineButton.IsEnabled = !_busy && hasSelection && !string.IsNullOrWhiteSpace(outputName) && !outputExists;
         UpdateButton.IsEnabled = CombinationHealth.CanRebuild(_busy, hasSelection, _existingCombination is not null);
         UpdateButton.Content = _changedMods.Count > 0 ? "Update and Rebuild" : "Rebuild Existing";
         StatusText.Text = _status;
         StatusText.Visibility = _busy ? Visibility.Collapsed : Visibility.Visible;
-        OutputNameBox.IsEnabled = !_busy && _existingCombination is null;
+        OutputNameBox.IsEnabled = !_busy;
 
-        CombineButton.ToolTip = _existingCombination is not null
-            ? "This source-mod combination has already been created."
-            : outputExists
+        CombineButton.ToolTip = outputExists
                 ? "An output with this name already exists."
-                : "Create this source-mod combination.";
+                : "Create a separate combined mod with this name.";
         if (_existingCombination is null)
             UpdateButton.ToolTip = "Create this combination before it can be updated.";
         else if (_legacyCombination)

@@ -1,3 +1,13 @@
+# WARNO UltiAI MODerator v1.3.0
+
+- Choose an existing combined mod to update or rebuild, even when several outputs use the same source mods.
+- Create a fresh combined mod from the same sources with a separate name. The app suggests the next unused name and leaves previous outputs intact.
+- Keep the existing rebuild safeguard and verification for the selected output.
+
+Extract the entire Windows ZIP before running the app.
+
+---
+
 # WARNO UltiAI MODerator v1.2.0
 
 - Preserve the other mod's UI components when both mods supply them, protecting custom division emblem registrations such as Spearhead Reforged's.

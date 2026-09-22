@@ -16,25 +16,41 @@ public sealed class CombinedModStateStore
         WarnoPaths paths,
         ModDescriptor other,
         ModDescriptor priority)
+        => FindAllForSources(paths, other, priority).FirstOrDefault();
+
+    public IReadOnlyList<CombinedModState> FindAllForSources(
+        WarnoPaths paths,
+        ModDescriptor other,
+        ModDescriptor priority)
     {
         if (!Directory.Exists(paths.ModsRoot))
         {
-            return null;
+            return [];
         }
 
-        foreach (var directory in Directory.EnumerateDirectories(paths.ModsRoot))
-        {
-            var state = TryLoad(directory);
-            if (state is not null
+        return Directory.EnumerateDirectories(paths.ModsRoot)
+            .Select(TryLoad)
+            .Where(state => state is not null
                 && SamePath(state.OtherMod.RootPath, other.RootPath)
                 && SamePath(state.PriorityMod.RootPath, priority.RootPath))
-            {
-                return state;
-            }
-        }
-
-        return null;
+            .Select(state => state!)
+            .OrderBy(state => state.OutputName, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
+
+    public static string SuggestNewOutputName(WarnoPaths paths, string baseName)
+    {
+        var candidate = baseName;
+        for (var number = 2; OutputExists(paths, candidate); number++)
+        {
+            candidate = $"{baseName} ({number})";
+        }
+        return candidate;
+    }
+
+    public static bool OutputExists(WarnoPaths paths, string outputName) =>
+        Directory.Exists(Path.Combine(paths.ModsRoot, outputName))
+        || Directory.Exists(Path.Combine(paths.SavedModsRoot, outputName));
 
     public CombinedModState? TryLoad(string outputDirectory)
     {

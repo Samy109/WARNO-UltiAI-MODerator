@@ -23,10 +23,11 @@
         </Border>
         <Border Grid.Row="2" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="7" Padding="15" Margin="0,0,0,12">
             <Grid>
-                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="24"/><ColumnDefinition/><ColumnDefinition Width="24"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="18"/><ColumnDefinition/><ColumnDefinition Width="18"/><ColumnDefinition/><ColumnDefinition Width="18"/><ColumnDefinition/></Grid.ColumnDefinitions>
                 <StackPanel><TextBlock Text="Mod to combine" FontWeight="SemiBold"/><ComboBox x:Name="OtherModBox" ItemTemplate="{StaticResource ModComboItemTemplate}" SelectionChanged="Selection_Changed"/></StackPanel>
                 <StackPanel Grid.Column="2"><TextBlock Text="Priority mod" FontWeight="SemiBold"/><ComboBox x:Name="UltiModBox" ItemTemplate="{StaticResource ModComboItemTemplate}" SelectionChanged="Selection_Changed"/></StackPanel>
-                <StackPanel Grid.Column="4"><TextBlock Text="New mod name" FontWeight="SemiBold"/><TextBox x:Name="OutputNameBox" TextChanged="OutputName_Changed"/></StackPanel>
+                <StackPanel Grid.Column="4"><TextBlock Text="Existing merge" FontWeight="SemiBold"/><ComboBox x:Name="ExistingMergeBox" DisplayMemberPath="OutputName" SelectionChanged="ExistingMerge_Changed"/></StackPanel>
+                <StackPanel Grid.Column="6"><TextBlock Text="New mod name" FontWeight="SemiBold"/><TextBox x:Name="OutputNameBox" TextChanged="OutputName_Changed"/></StackPanel>
             </Grid>
         </Border>
         <Border Grid.Row="3" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="7" Padding="15">

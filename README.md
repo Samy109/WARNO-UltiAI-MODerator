@@ -21,7 +21,7 @@ Editable SDK mods and UltiAIDEV remain supported as optional developer workflows
 3. Download the release ZIP, extract the entire folder, then run `WARNO-UltiAI-MODerator.exe`. Choose the other mod and the priority UltiAI variant, then preview. Do not run the executable from inside the ZIP.
 4. Click **Create as New**. The app creates a local combined mod, verifies every planned output path, and records one compact fingerprint for each source mod.
 
-When you select the same source mods again, the app checks the installed inputs and existing combined output. A visible status reports detected source updates, missing or altered output, changes to WARNO build data, or a failed check. **Update and Rebuild** is available when sources changed; **Rebuild Existing** remains available even when they did not. **Create as New** stays unavailable for an existing combination.
+When you select the same source mods again, choose an output under **Existing merge** to update or rebuild it. The app checks that output and reports source updates, missing or altered output, changes to WARNO build data, or a failed check. **Update and Rebuild** is available when sources changed; **Rebuild Existing** remains available even when they did not. To keep the selected merge and make a separate one, use the suggested unused **New mod name** or enter another unused name, then click **Create as New**. Each output can be selected and rebuilt independently.
 
 Rebuilding checks the inputs again and safeguards the previous combination until generation, verification, and saving the update record succeed. If source files or WARNO build data change during the merge, it stops and restores the previous combination. Older records require one rebuild to begin tracking output integrity.
 
@@ -39,7 +39,7 @@ Inputs are never modified. If initial creation fails, the incomplete new output 
 
 Workshop `.ndfbin` databases and `Catalog.cat` files are compiled, atomic files; WARNO supplies no supported object-level merger for them. When both mods contain the same NDF database, the complete UltiAI database replaces the Workshop database, except `UI/Components.ndfbin`. For that UI database, the other mod takes precedence to preserve its custom interface and texture registrations. If only UltiAI supplies it, UltiAI's version is retained. The compatibility manifest follows the selected UI payload.
 
-Combined mods may retain vanilla end-game difficulty labels. Additional roles such as Siege require an end-game summary playtest with the other mod's UI. Rebuild existing combinations after installing the revised v1.2.0 package.
+Combined mods may retain vanilla end-game difficulty labels. Additional roles such as Siege require an end-game summary playtest with the other mod's UI.
 
 For Workshop packages with custom assets, the Workshop `Catalog.cat` is retained so those assets remain registered. Catalog binaries cannot be safely combined, so UltiAI assets that exist only through its own catalog (typically cosmetic branding) may not appear. The application reports this before execution. Gameplay NDF precedence is unaffected.
 
@@ -49,7 +49,6 @@ Requires the .NET 9 SDK on Windows when building from source. The release packag
 
 ```powershell
 dotnet build WarnoModerator.sln
-dotnet run --project WarnoModerator.Tests -c Release
 dotnet publish WarnoModerator.App -c Release -r win-x64 --self-contained true
 ```
 
