@@ -7,8 +7,6 @@ public sealed class IniDocument
     private readonly Dictionary<string, Dictionary<string, string>> _sections =
         new(StringComparer.OrdinalIgnoreCase);
 
-    public IEnumerable<string> SectionNames => _sections.Keys;
-
     public static IniDocument Load(string path)
     {
         using var reader = new StreamReader(path, Encoding.UTF8, true);

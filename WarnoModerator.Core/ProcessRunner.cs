@@ -46,6 +46,7 @@ public sealed class ProcessRunner : IProcessRunner
             if (!string.IsNullOrWhiteSpace(eventArgs.Data)) log("ERROR: " + eventArgs.Data);
         };
 
+        cancellationToken.ThrowIfCancellationRequested();
         if (!process.Start())
         {
             throw new CombineException($"Could not start {Path.GetFileName(executable)}.");
@@ -64,6 +65,7 @@ public sealed class ProcessRunner : IProcessRunner
             if (!process.HasExited)
             {
                 process.Kill(true);
+                await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
             }
 
             throw;

@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="WARNO UltiAI MODerator" Height="820" Width="1180" MinHeight="700" MinWidth="950"
         Background="{StaticResource BackgroundBrush}" Foreground="{StaticResource TextBrush}"
-        WindowStartupLocation="CenterScreen" Loaded="Window_Loaded">
+        WindowStartupLocation="CenterScreen" Loaded="Window_Loaded" Closing="Window_Closing">
     <Grid Background="{StaticResource BackgroundBrush}" Margin="24">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
@@ -11,7 +11,7 @@
         </Grid.RowDefinitions>
         <StackPanel Grid.Row="0" Margin="0,0,0,14">
             <TextBlock Text="WARNO UltiAI MODerator" FontSize="28" FontWeight="Bold" Foreground="#DDE5C5"/>
-            <TextBlock Text="Combine installed Steam Workshop mods directly. UltiAI takes precedence; the other mod keeps its UI components when both provide them." Foreground="{StaticResource MutedBrush}" Margin="0,4,0,0"/>
+            <TextBlock Text="Combine installed Steam Workshop mods directly. UltiAI takes precedence; the other mod keeps its UI components when both provide them." Foreground="{StaticResource MutedBrush}" Margin="0,4,0,0" TextWrapping="Wrap"/>
         </StackPanel>
         <Border Grid.Row="1" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="7" Padding="15" Margin="0,0,0,12">
             <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
@@ -31,9 +31,15 @@
             </Grid>
         </Border>
         <Border Grid.Row="3" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="7" Padding="15">
-            <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+            <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                 <DockPanel Margin="0,0,0,8"><TextBlock Text="Merge preview" FontSize="17" FontWeight="SemiBold"/><TextBlock x:Name="SummaryText" DockPanel.Dock="Right" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right"/></DockPanel>
-                <DataGrid x:Name="PreviewGrid" Grid.Row="1" IsReadOnly="True" AutoGenerateColumns="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal">
+                <DockPanel Grid.Row="1" Margin="0,0,0,8">
+                    <Button x:Name="ExportButton" DockPanel.Dock="Right" Content="Export report" Click="Export_Click" IsEnabled="False"/>
+                    <CheckBox x:Name="ConflictsOnlyBox" DockPanel.Dock="Right" Content="Conflicts only" Foreground="{StaticResource TextBrush}" VerticalAlignment="Center" Margin="12,0" Checked="Filter_Changed" Unchecked="Filter_Changed"/>
+                    <TextBlock Text="Search paths" VerticalAlignment="Center" Margin="4,0,8,0"/>
+                    <TextBox x:Name="SearchBox" ToolTip="Search paths" TextChanged="Filter_Changed"/>
+                </DockPanel>
+                <DataGrid x:Name="PreviewGrid" Grid.Row="2" IsReadOnly="True" AutoGenerateColumns="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal">
                     <DataGrid.Columns>
                         <DataGridTextColumn Header="Path" Binding="{Binding RelativePath}" Width="*"/>
                         <DataGridTextColumn Header="Winner" Binding="{Binding Winner}" Width="130"/>
@@ -50,7 +56,7 @@
             </Grid>
             <Button x:Name="PreviewButton" Grid.Column="1" Content="Preview merge" Click="Preview_Click"/>
             <Button x:Name="CombineButton" Grid.Column="2" Content="Create as New" Click="Combine_Click"/>
-            <Button x:Name="UpdateButton" Grid.Column="3" Content="Update and Rebuild" Click="Update_Click" IsEnabled="False"/>
+            <StackPanel Grid.Column="3" Orientation="Horizontal"><Button x:Name="UpdateButton" Content="Update and Rebuild" Click="Update_Click" IsEnabled="False"/><Button x:Name="CancelButton" Content="Cancel" Click="Cancel_Click" Visibility="Collapsed"/></StackPanel>
         </Grid>
         <Border Grid.Row="5" Background="{StaticResource LogBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="7" Padding="12">
             <TextBox x:Name="LogBox" IsReadOnly="True" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" TextWrapping="Wrap" Background="Transparent" Foreground="#D9E0CC" BorderThickness="0" FontFamily="Cascadia Mono,Consolas" FontSize="12"/>

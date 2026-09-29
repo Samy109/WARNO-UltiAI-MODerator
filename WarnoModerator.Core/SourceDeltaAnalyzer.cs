@@ -7,7 +7,7 @@ public sealed class SourceDeltaAnalyzer
 {
     private static readonly string[] SourceTrees = ["GameData", "CommonData"];
 
-    public IReadOnlyList<SourceDelta> Analyze(ModDescriptor mod)
+    public IReadOnlyList<SourceDelta> Analyze(ModDescriptor mod, CancellationToken cancellationToken = default)
     {
         if (mod.Kind != ModKind.EditableSource)
         {
@@ -37,6 +37,7 @@ public sealed class SourceDeltaAnalyzer
 
             foreach (var file in Directory.EnumerateFiles(treePath, "*", SearchOption.AllDirectories))
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var relative = NormalizeRelativePath(Path.GetRelativePath(mod.RootPath, file));
                 diskFiles[relative] = file;
             }
@@ -51,9 +52,10 @@ public sealed class SourceDeltaAnalyzer
                 continue;
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             using var diskStream = File.OpenRead(pair.Value);
             using var zipStream = entry.Open();
-            if (!StreamsEqual(diskStream, zipStream))
+            if (!HashStream(diskStream, cancellationToken).AsSpan().SequenceEqual(HashStream(zipStream, cancellationToken)))
             {
                 deltas.Add(new SourceDelta(pair.Key, DeltaKind.Modified, pair.Value));
             }
@@ -71,19 +73,25 @@ public sealed class SourceDeltaAnalyzer
         return deltas.OrderBy(x => x.RelativePath, StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
-    public static string ComputeSha256(string path)
+    public static string ComputeSha256(string path, CancellationToken cancellationToken = default)
     {
         using var stream = File.OpenRead(path);
-        return Convert.ToHexString(SHA256.HashData(stream));
+        return Convert.ToHexString(HashStream(stream, cancellationToken));
     }
 
-    private static bool StreamsEqual(Stream left, Stream right)
+    private static byte[] HashStream(Stream stream, CancellationToken cancellationToken)
     {
-        var leftHash = SHA256.HashData(left);
-        var rightHash = SHA256.HashData(right);
-        return leftHash.AsSpan().SequenceEqual(rightHash);
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        var buffer = new byte[128 * 1024];
+        int count;
+        while ((count = stream.Read(buffer)) > 0)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            hash.AppendData(buffer, 0, count);
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+        return hash.GetHashAndReset();
     }
-
     private static string NormalizeRelativePath(string path) =>
         path.Replace('/', '\\').TrimStart('\\');
 }

@@ -6,7 +6,6 @@
         <!-- Moss, field canvas, and weathered metal. Every control receives explicit contrast. -->
         <SolidColorBrush x:Key="BackgroundBrush" Color="#151A14"/>
         <SolidColorBrush x:Key="PanelBrush" Color="#222B20"/>
-        <SolidColorBrush x:Key="PanelRaisedBrush" Color="#2B3628"/>
         <SolidColorBrush x:Key="InputBrush" Color="#E7E9DC"/>
         <SolidColorBrush x:Key="InputTextBrush" Color="#182016"/>
         <SolidColorBrush x:Key="AccentBrush" Color="#788B52"/>

@@ -1,3 +1,18 @@
+# WARNO UltiAI MODerator v1.4.0
+
+- Fix compatibility fingerprints so every selected compiled database uses its winning input's manifest entry. Editable inputs use the freshly generated manifest.
+- Restore source and runtime backups independently after failed or cancelled builds. Preserve incomplete output and provide recovery paths when files are locked.
+- Detect interrupted builds at startup or refresh and offer recovery; persist the commit before removing backups.
+- Safely ignore malformed tracking records and reject compiled inputs with missing compatibility revisions or selected database fingerprints.
+- Keep scanning, planning, hashing, and building off the UI thread. Add cancellation, including stopping and awaiting SDK processes.
+- Use one shared planner for file selection, catalog fallback, copying, manifest generation, verification, and final reporting. Mark mixed-source previews as provisional until fresh generation.
+- Add path search, a differing-conflicts filter, identical-overlap labels, and JSON report export.
+- Preserve v1.3.0's existing-merge selector and the ability to create several independently rebuildable outputs from the same inputs.
+- Consolidate create/rebuild workflows and remove unused code. Remove the test project after verification.
+
+Extract the entire Windows x64 ZIP before running the executable. Rebuild existing combinations to apply these fixes. Compiled databases remain atomic; in-game compatibility and additional AI role labels still require playtesting.
+---
+
 # WARNO UltiAI MODerator v1.3.0
 
 - Choose an existing combined mod to update or rebuild, even when several outputs use the same source mods.

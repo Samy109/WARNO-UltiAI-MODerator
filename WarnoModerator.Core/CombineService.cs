@@ -1,556 +1,206 @@
 namespace WarnoModerator.Core;
 
-public sealed class CombineService(
-    SourceDeltaAnalyzer deltaAnalyzer,
-    IProcessRunner processRunner)
+public sealed class CombineService(SourceDeltaAnalyzer deltaAnalyzer, IProcessRunner processRunner)
 {
-    public async Task<CombineResult> CombineAsync(
-        CombineRequest request,
-        IProgress<string>? progress = null,
-        CancellationToken cancellationToken = default,
-        IProgress<CombineProgress>? operationProgress = null,
-        bool preserveIncompleteOutput = true,
-        Func<CombineResult, Task>? finalize = null)
-    {
-        var logLines = new List<string>();
-        void Log(string line)
-        {
-            lock (logLines) logLines.Add(line);
-            progress?.Report(line);
-        }
-        void Report(int percent, string stage) =>
-            operationProgress?.Report(new CombineProgress(Math.Clamp(percent, 0, 100), stage));
+    public Task<CombineResult> CombineAsync(CombineRequest request, IProgress<string>? progress = null,
+        CancellationToken cancellationToken = default, IProgress<CombineProgress>? operationProgress = null) =>
+        ExecuteAsync(request, false, progress, cancellationToken, operationProgress);
 
-        Report(0, "Preparing");
+    public Task<CombineResult> RebuildAsync(CombineRequest request, IProgress<string>? progress = null,
+        CancellationToken cancellationToken = default, IProgress<CombineProgress>? operationProgress = null) =>
+        ExecuteAsync(request, true, progress, cancellationToken, operationProgress);
+
+    private async Task<CombineResult> ExecuteAsync(CombineRequest request, bool rebuild, IProgress<string>? progress,
+        CancellationToken token, IProgress<CombineProgress>? operationProgress)
+    {
+        void Log(string message) => progress?.Report(message);
+        void Report(int percent, string stage) { token.ThrowIfCancellationRequested(); operationProgress?.Report(new(percent, stage)); }
+        MergePlanner.ValidateOutputName(request.OutputName);
+        MergePlanner.ValidateInputs(request.Paths, request.OtherMod, request.UltiMod, token);
         var outputSource = Path.Combine(request.Paths.ModsRoot, request.OutputName);
         var outputRuntime = Path.Combine(request.Paths.SavedModsRoot, request.OutputName);
-
-        if (Directory.Exists(outputSource) || Directory.Exists(outputRuntime))
-        {
-            throw new CombineException("The output appeared after preview. Refresh and choose another name.");
-        }
-
+        foreach (var output in new[] { outputSource, outputRuntime })
+            if (MergePlanner.SamePath(output, request.OtherMod.RootPath) || MergePlanner.SamePath(output, request.UltiMod.RootPath))
+                throw new CombineException("The output must not replace an input mod.");
         VerifyModDirectoryWritable(request.Paths.ModsRoot);
-        Log($"Creating '{request.OutputName}' with WARNO's mod SDK...");
-        await RunCreateNewModAsync(request, Log, cancellationToken).ConfigureAwait(false);
-        if (!Directory.Exists(outputSource))
-        {
-            throw new CombineException("CreateNewMod.bat completed without creating the output directory.");
-        }
-        Report(5, "Local mod created");
-
+        using var operationLock = BuildRecovery.AcquireLock(request.Paths, request.OutputName);
+        var exists = Directory.Exists(outputSource) || Directory.Exists(outputRuntime);
+        if (rebuild && !exists) throw new CombineException("The existing combined mod is missing. Refresh mods.");
+        if (!rebuild && exists) throw new CombineException("The output already exists. Refresh mods and rebuild it instead.");
+        var fingerprints = new ModFingerprintService();
+        var health = new CombinationHealth();
+        Report(0, "Checking inputs");
+        var before = await fingerprints.ComputeAsync([request.OtherMod, request.UltiMod], cancellationToken: token).ConfigureAwait(false);
+        var gameHash = health.GameHash(request.Paths, token);
+        var planner = new MergePlanner(deltaAnalyzer);
+        var sourcePlan = planner.PlanSourceMerge(request.OtherMod, request.UltiMod, token);
+        var recovery = new BuildRecovery();
+        var record = recovery.Begin(request.Paths, request.OutputName);
+        CombineResult result;
         try
         {
-            if (request.OtherMod.Kind == ModKind.EditableSource)
+            recovery.MoveOriginals(request.Paths, record);
+            Report(5, "Creating local mod");
+            await RunSdkAsync(request, "CreateNewMod.py", [request.OutputName], request.Paths.ModsRoot, Log, token).ConfigureAwait(false);
+            if (!Directory.Exists(outputSource)) throw new CombineException("WARNO did not create the output directory.");
+            foreach (var decision in sourcePlan)
             {
-                Log($"Applying source delta from {request.OtherMod.Name}...");
-                ApplySourceDelta(deltaAnalyzer.Analyze(request.OtherMod), outputSource);
+                token.ThrowIfCancellationRequested();
+                var destination = FileSystemOps.SafeCombine(outputSource, decision.RelativePath);
+                if (decision.Kind == MergeDecisionKind.Delete) File.Delete(destination);
+                else FileSystemOps.CopyFileAtomic(decision.SourcePath!, destination, token);
             }
-
-            if (request.UltiMod.Kind == ModKind.EditableSource)
-            {
-                Log($"Applying editable {request.UltiMod.Name} with highest precedence...");
-                ApplySourceDelta(deltaAnalyzer.Analyze(request.UltiMod), outputSource);
-            }
-
-            Log("Generating the local mod manifest with the installed WARNO build...");
             Report(10, "Generating with WARNO");
-            await RunGenerateAsync(request.Paths, outputSource, request.OutputName, Log, cancellationToken)
-                .ConfigureAwait(false);
-            ValidateGeneratedCompatibility(request, outputRuntime);
-            Report(40, "WARNO generation complete");
-
-            IReadOnlyList<string>? compiledPaths = null;
-            if (request.OtherMod.Kind == ModKind.WorkshopCompiled
-                || request.UltiMod.Kind == ModKind.WorkshopCompiled)
+            await RunSdkAsync(request, "GenerateMod.py", ["WARNO", request.OutputName], outputSource, Log, token).ConfigureAwait(false);
+            var generatedConfig = LoadGeneratedConfig(request, outputRuntime);
+            MergePreview plan;
+            if (request.OtherMod.Kind == ModKind.WorkshopCompiled || request.UltiMod.Kind == ModKind.WorkshopCompiled)
             {
-                Log($"Composing compiled payloads with {request.UltiMod.Name} precedence...");
-                compiledPaths = ComposeCompiledPayload(request, outputSource, outputRuntime, Log, Report);
+                var otherRoot = request.OtherMod.Kind == ModKind.WorkshopCompiled ? request.OtherMod.RootPath : outputRuntime;
+                var ultiRoot = request.UltiMod.Kind == ModKind.WorkshopCompiled ? request.UltiMod.RootPath : outputSource;
+                plan = MergePlanner.CreateCompiledPlan(request.OutputName, request.OtherMod, request.UltiMod, otherRoot, ultiRoot, token);
+                ComposeCompiledPayload(request, plan, generatedConfig, outputSource, outputRuntime, Report, token);
             }
-
-            VerifyResult(request, outputSource, outputRuntime, compiledPaths, Log, Report);
-            Report(99, "Checking inputs and recording result");
-            var result = new CombineResult(outputSource, outputRuntime, logLines.ToArray());
-            if (finalize is not null) await finalize(result).ConfigureAwait(false);
-            Log("Combination and verification completed successfully.");
-            Report(100, "Complete");
-            return result;
-        }
-        catch
-        {
-            Log(preserveIncompleteOutput
-                ? "The operation stopped. Input mods were not changed; the incomplete output was preserved for inspection."
-                : "The operation stopped. Input mods were not changed.");
-            throw;
-        }
-    }
-
-    public async Task<CombineResult> RebuildAsync(
-        CombineRequest request,
-        IProgress<string>? progress = null,
-        CancellationToken cancellationToken = default,
-        IProgress<CombineProgress>? operationProgress = null,
-        Func<CombineResult, Task>? finalize = null)
-    {
-        var outputSource = Path.Combine(request.Paths.ModsRoot, request.OutputName);
-        var outputRuntime = Path.Combine(request.Paths.SavedModsRoot, request.OutputName);
-        if (!Directory.Exists(outputSource) && !Directory.Exists(outputRuntime))
-        {
-            throw new CombineException("The existing combined mod could not be found. Refresh the mod list and try again.");
-        }
-
-        VerifyModDirectoryWritable(request.Paths.ModsRoot);
-        var sourceBackup = outputSource + ".warno-moderator-backup-" + Guid.NewGuid().ToString("N");
-        var runtimeBackup = outputRuntime + ".warno-moderator-backup-" + Guid.NewGuid().ToString("N");
-        var sourceExisted = Directory.Exists(outputSource);
-        var runtimeExisted = Directory.Exists(outputRuntime);
-        var sourceMoved = false;
-        var runtimeMoved = false;
-
-        try
-        {
-            progress?.Report("Safeguarding the existing combined mod...");
-            if (Directory.Exists(outputSource))
+            else
             {
-                Directory.Move(outputSource, sourceBackup);
-                sourceMoved = true;
+                plan = new MergePreview(request.OutputName, request.OtherMod, request.UltiMod, sourcePlan, []);
+                foreach (var decision in plan.Decisions)
+                {
+                    token.ThrowIfCancellationRequested();
+                    var actual = FileSystemOps.SafeCombine(outputSource, decision.RelativePath);
+                    if (decision.Kind == MergeDecisionKind.Delete)
+                    { if (File.Exists(actual)) throw new CombineException($"Deletion verification failed for {decision.RelativePath}."); }
+                    else VerifySameFile(actual, decision.SourcePath!, decision.RelativePath, token);
+                }
             }
-            if (Directory.Exists(outputRuntime))
-            {
-                Directory.Move(outputRuntime, runtimeBackup);
-                runtimeMoved = true;
-            }
-
-            var result = await CombineAsync(
-                request,
-                progress,
-                cancellationToken,
-                operationProgress,
-                preserveIncompleteOutput: false,
-                finalize: finalize).ConfigureAwait(false);
-
-            TryDeleteDirectory(sourceBackup);
-            TryDeleteDirectory(runtimeBackup);
-            progress?.Report("The previous combined mod was replaced successfully.");
-            return result;
+            if (!Directory.Exists(Path.Combine(outputSource, "Gen")) || !Directory.Exists(Path.Combine(outputRuntime, "Gen")))
+                throw new CombineException("WARNO generated incomplete output.");
+            Report(92, "Verifying inputs and output");
+            var runtimeHash = await health.RuntimeHashAsync(outputRuntime, token).ConfigureAwait(false);
+            var after = await fingerprints.ComputeAsync([request.OtherMod, request.UltiMod], cancellationToken: token).ConfigureAwait(false);
+            CombinationHealth.VerifyInputs(before, after);
+            if (health.GameHash(request.Paths, token) != gameHash)
+                throw new CombineException("WARNO build data changed during the merge. Let Steam finish updating, then retry.");
+            var state = new CombinedModState(CombinedModState.CurrentSchemaVersion, request.OutputName, after[0], after[1],
+                runtimeHash, gameHash);
+            token.ThrowIfCancellationRequested();
+            new CombinedModStateStore().Save(outputSource, state);
+            result = new CombineResult(outputSource, outputRuntime, plan, state);
+            recovery.Complete(request.Paths, record, Log);
         }
-        catch
+        catch (Exception original)
         {
-            progress?.Report("Rebuild failed; restoring the previous combined mod...");
-            if (sourceMoved || !sourceExisted) DeleteDirectoryIfExists(outputSource);
-            if (runtimeMoved || !runtimeExisted) DeleteDirectoryIfExists(outputRuntime);
-            if (sourceMoved && Directory.Exists(sourceBackup))
+            Log("Operation stopped; restoring previous outputs independently...");
+            try { recovery.Restore(request.Paths, record, Log); }
+            catch (Exception restoration)
             {
-                Directory.Move(sourceBackup, outputSource);
-            }
-            if (runtimeMoved && Directory.Exists(runtimeBackup))
-            {
-                Directory.Move(runtimeBackup, outputRuntime);
+                throw new CombineException($"{original.Message}{Environment.NewLine}{restoration.Message}",
+                    new AggregateException(original, restoration));
             }
             throw;
         }
+        // Cancellation after the commit cannot turn a completed build into a rollback.
+        Log($"Verified {result.Plan.Decisions.Count} merge decisions. Combination completed successfully.");
+        operationProgress?.Report(new(100, "Complete"));
+        return result;
     }
 
-    private async Task RunCreateNewModAsync(
-        CombineRequest request,
-        Action<string> log,
-        CancellationToken cancellationToken)
+    private async Task RunSdkAsync(CombineRequest request, string scriptName, IEnumerable<string> arguments,
+        string workingDirectory, Action<string> log, CancellationToken token)
     {
         var python = Path.Combine(request.Paths.ModsRoot, "Utils", "Python", "python.exe");
-        var script = Path.Combine(request.Paths.ModsRoot, "Utils", "Scripts", "CreateNewMod.py");
-        if (!File.Exists(python) || !File.Exists(script))
-        {
-            throw new CombineException("WARNO's CreateNewMod tools were not found under WARNO\\Mods\\Utils.");
-        }
-
-        var exitCode = await processRunner.RunAsync(
-            python,
-            [script, request.OutputName],
-            request.Paths.ModsRoot,
-            log,
-            cancellationToken).ConfigureAwait(false);
-        if (exitCode != 0)
-        {
-            throw new CombineException($"CreateNewMod.bat failed with exit code {exitCode}.");
-        }
+        var script = Path.Combine(request.Paths.ModsRoot, "Utils", "Scripts", scriptName);
+        if (!File.Exists(python) || !File.Exists(script)) throw new CombineException($"WARNO's {scriptName} tools are missing.");
+        token.ThrowIfCancellationRequested();
+        var exitCode = await processRunner.RunAsync(python, new[] { script }.Concat(arguments), workingDirectory, log, token).ConfigureAwait(false);
+        if (exitCode != 0) throw new CombineException($"WARNO {scriptName} failed with exit code {exitCode}.");
     }
 
-    private static void VerifyModDirectoryWritable(string modsRoot)
+    private static void VerifyModDirectoryWritable(string root)
     {
-        var probe = Path.Combine(modsRoot, $".warno-moderator-write-{Guid.NewGuid():N}.tmp");
         try
         {
-            using var stream = new FileStream(
-                probe,
-                FileMode.CreateNew,
-                FileAccess.Write,
-                FileShare.None,
-                1,
-                FileOptions.DeleteOnClose);
+            using var probe = new FileStream(Path.Combine(root, $".warno-moderator-write-{Guid.NewGuid():N}.tmp"),
+                FileMode.CreateNew, FileAccess.Write, FileShare.None, 1, FileOptions.DeleteOnClose);
         }
         catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
-        {
-            throw new CombineException(
-                "WARNO\\Mods is not writable. Close the app, right-click WARNO-UltiAI-MODerator.exe, and choose 'Run as administrator'. If it still fails, verify that Windows Security or antivirus is not blocking the app.");
-        }
-        finally
-        {
-            if (File.Exists(probe)) File.Delete(probe);
-        }
+        { throw new CombineException("WARNO\\Mods is not writable. Check permissions or run the app as administrator.", ex); }
     }
 
-    private static void TryDeleteDirectory(string path)
+    private static IniDocument LoadGeneratedConfig(CombineRequest request, string runtime)
     {
-        if (!Directory.Exists(path))
-        {
-            return;
-        }
-
-        try
-        {
-            Directory.Delete(path, true);
-        }
-        catch (IOException)
-        {
-            // A successful rebuild remains usable if Windows temporarily retains a backup file handle.
-        }
-        catch (UnauthorizedAccessException)
-        {
-            // Leave the uniquely named backup in place rather than failing a completed rebuild.
-        }
+        var path = Path.Combine(runtime, "Config.ini");
+        if (!File.Exists(path)) throw new CombineException("WARNO did not generate the compatibility manifest.");
+        var config = IniDocument.Load(path);
+        var version = config.GetInt("Properties", "ModGenVersion", -1);
+        if (version < 0) throw new CombineException("WARNO generated a manifest without a ModGen revision.");
+        foreach (var input in new[] { request.OtherMod, request.UltiMod }.Where(x => x.Kind == ModKind.WorkshopCompiled))
+            if (input.ModGenVersion is null || input.ModGenVersion != version)
+                throw new CombineException($"{input.Name} uses ModGen {input.ModGenVersion}, but installed WARNO requires {version}. Refresh the Workshop subscription.");
+        return config;
     }
 
-    private static void DeleteDirectoryIfExists(string path)
+    private static void ComposeCompiledPayload(CombineRequest request, MergePreview plan, IniDocument generatedConfig,
+        string source, string runtime, Action<int, string> report, CancellationToken token)
     {
-        if (Directory.Exists(path))
-        {
-            Directory.Delete(path, true);
-        }
-    }
-
-    private async Task RunGenerateAsync(
-        WarnoPaths paths,
-        string outputSource,
-        string outputName,
-        Action<string> log,
-        CancellationToken cancellationToken)
-    {
-        var python = Path.Combine(paths.ModsRoot, "Utils", "Python", "python.exe");
-        var script = Path.Combine(paths.ModsRoot, "Utils", "Scripts", "GenerateMod.py");
-        if (!File.Exists(python) || !File.Exists(script))
-        {
-            throw new CombineException("WARNO's non-interactive generation tools are missing.");
-        }
-
-        var exitCode = await processRunner.RunAsync(
-            python,
-            [script, "WARNO", outputName],
-            outputSource,
-            log,
-            cancellationToken).ConfigureAwait(false);
-        if (exitCode != 0)
-        {
-            throw new CombineException($"WARNO mod generation failed with exit code {exitCode}.");
-        }
-    }
-
-    private static void ApplySourceDelta(IEnumerable<SourceDelta> deltas, string outputRoot)
-    {
-        foreach (var delta in deltas)
-        {
-            var destination = FileSystemOps.SafeCombine(outputRoot, delta.RelativePath);
-            if (delta.Kind == DeltaKind.Deleted)
-            {
-                if (File.Exists(destination)) File.Delete(destination);
-                continue;
-            }
-
-            FileSystemOps.CopyFileAtomic(delta.SourcePath!, destination);
-        }
-    }
-
-    private static void ValidateGeneratedCompatibility(CombineRequest request, string outputRuntime)
-    {
-        var configPath = Path.Combine(outputRuntime, "Config.ini");
-        if (!File.Exists(configPath))
-        {
-            throw new CombineException("WARNO did not generate the local mod compatibility manifest.");
-        }
-
-        var generatedConfig = IniDocument.Load(configPath);
-        var currentModGen = generatedConfig.GetInt("Properties", "ModGenVersion", -1);
-        if (currentModGen < 0)
-        {
-            throw new CombineException("WARNO generated a compatibility manifest without a ModGen revision.");
-        }
-
-        foreach (var input in new[] { request.OtherMod, request.UltiMod })
-        {
-            if (input.ModGenVersion is int inputModGen && inputModGen != currentModGen)
-            {
-                throw new CombineException(
-                    $"{input.Name} uses ModGen {inputModGen}, but the installed WARNO build requires {currentModGen}. " +
-                    "Update the Workshop subscription before combining it.");
-            }
-        }
-    }
-
-    private IReadOnlyList<string> ComposeCompiledPayload(
-        CombineRequest request,
-        string outputSource,
-        string outputRuntime,
-        Action<string> log,
-        Action<int, string> report)
-    {
-        var staging = Path.Combine(outputSource, ".combine-staging-" + Guid.NewGuid().ToString("N"));
-        var generatedBackup = Path.Combine(outputSource, ".generated-ulti-" + Guid.NewGuid().ToString("N"));
+        var staging = Path.Combine(source, ".combine-staging-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(staging);
-
-        try
+        // The plan is the only source of file winners. Stage and verify before replacing generated inputs.
+        for (var i = 0; i < plan.Decisions.Count; i++)
         {
-            var otherRuntimeRoot = request.OtherMod.Kind == ModKind.WorkshopCompiled
-                ? request.OtherMod.RootPath
-                : outputRuntime;
-            var priorityRuntimeRoot = request.UltiMod.Kind == ModKind.WorkshopCompiled
-                ? request.UltiMod.RootPath
-                : outputSource;
-
-            var baseFiles = MergePlanner.EnumerateRuntimeFiles(otherRuntimeRoot).ToArray();
-            var basePaths = baseFiles.Select(x => x.RelativePath).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var preserveOtherComponents = baseFiles.Any(x => MergePlanner.IsUiComponents(x.RelativePath));
-            var overlayFiles = MergePlanner.EnumerateUltiOverlayFiles(Path.Combine(priorityRuntimeRoot, "Gen"))
-                .Where(x => !MergePlanner.IsUiComponents(x.RelativePath) || !basePaths.Contains(x.RelativePath))
-                .ToArray();
-            var expectedFiles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var item in baseFiles)
-            {
-                expectedFiles[item.RelativePath] = item.FullPath;
-            }
-            foreach (var item in overlayFiles)
-            {
-                expectedFiles[item.RelativePath] = item.FullPath;
-            }
-            var copyCount = baseFiles.Length + overlayFiles.Length;
-            var copied = 0;
-
-            foreach (var item in baseFiles)
-            {
-                FileSystemOps.CopyFileAtomic(
-                    item.FullPath,
-                    FileSystemOps.SafeCombine(staging, item.RelativePath));
-                copied++;
-                ReportFileProgress(report, 42, 63, copied, copyCount, "Composing files");
-            }
-
-            var outputGen = Path.Combine(outputSource, "Gen");
-            var priorityGen = Path.Combine(priorityRuntimeRoot, "Gen");
-            foreach (var item in overlayFiles)
-            {
-                FileSystemOps.CopyFileAtomic(
-                    item.FullPath,
-                    FileSystemOps.SafeCombine(staging, item.RelativePath));
-                copied++;
-                ReportFileProgress(report, 42, 63, copied, copyCount, "Composing files");
-            }
-
-            var stagedCatalog = Path.Combine(staging, "Gen", "ResourceFile", "Catalog.cat");
-            if (!File.Exists(stagedCatalog))
-            {
-                var priorityCatalog = Path.Combine(priorityGen, "ResourceFile", "Catalog.cat");
-                if (File.Exists(priorityCatalog))
-                {
-                    FileSystemOps.CopyFileAtomic(priorityCatalog, stagedCatalog);
-                    expectedFiles["Gen\\ResourceFile\\Catalog.cat"] = priorityCatalog;
-                }
-            }
-
-            VerifyCompiledPlan(expectedFiles, staging, report);
-
-            if (Directory.Exists(outputGen)) Directory.Move(outputGen, generatedBackup);
-            Directory.Move(Path.Combine(staging, "Gen"), outputGen);
-
-            foreach (var child in new[] { "GameData", "DatasMap", "DecorsSets", "Maps", "Scenarios" })
-            {
-                var stagedChild = Path.Combine(staging, child);
-                if (Directory.Exists(stagedChild))
-                {
-                    FileSystemOps.CopyDirectory(stagedChild, Path.Combine(outputSource, child));
-                    FileSystemOps.CopyDirectory(stagedChild, Path.Combine(outputRuntime, child));
-                }
-            }
-            report(78, "Copying runtime assets");
-
-            Directory.CreateDirectory(outputRuntime);
-            var runtimeGen = Path.Combine(outputRuntime, "Gen");
-            if (Directory.Exists(runtimeGen)) Directory.Delete(runtimeGen, true);
-            FileSystemOps.CopyDirectory(outputGen, runtimeGen);
-            report(85, "Writing compatibility manifest");
-
-            SynthesizeConfig(request, outputRuntime, preserveOtherComponents);
-            log(preserveOtherComponents
-                ? "Other mod UI components and base catalog retained; Ulti precedence applied to remaining compiled databases."
-                : "Base catalog retained; compiled Ulti databases applied afterward.");
-            return expectedFiles.Keys.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray();
+            var decision = plan.Decisions[i];
+            var staged = FileSystemOps.SafeCombine(staging, decision.RelativePath);
+            FileSystemOps.CopyFileAtomic(decision.SourcePath!, staged, token);
+            VerifySameFile(staged, decision.SourcePath!, decision.RelativePath, token);
+            if (i % 25 == 0) report(40 + 30 * i / Math.Max(1, plan.Decisions.Count), "Composing and verifying files");
         }
-        finally
+        SynthesizeConfig(request, plan, generatedConfig);
+        foreach (var root in new[] { source, runtime })
         {
-            if (Directory.Exists(staging)) Directory.Delete(staging, true);
-            if (Directory.Exists(generatedBackup)) Directory.Delete(generatedBackup, true);
+            token.ThrowIfCancellationRequested();
+            var gen = Path.Combine(root, "Gen");
+            if (Directory.Exists(gen)) Directory.Delete(gen, true);
+            foreach (var decision in plan.Decisions)
+            {
+                var staged = FileSystemOps.SafeCombine(staging, decision.RelativePath);
+                var destination = FileSystemOps.SafeCombine(root, decision.RelativePath);
+                FileSystemOps.CopyFileAtomic(staged, destination, token);
+                VerifySameFile(destination, staged, decision.RelativePath, token);
+            }
         }
+        report(85, "Writing compatibility manifest");
+        var configPath = Path.Combine(runtime, "Config.ini");
+        generatedConfig.Save(configPath);
+        var saved = IniDocument.Load(configPath);
+        foreach (var entry in generatedConfig.GetSection("Config"))
+            if (saved.Get("Config", entry.Key) != entry.Value) throw new CombineException($"Manifest verification failed for {entry.Key}.");
+        Directory.Delete(staging, true);
     }
 
-    private static void SynthesizeConfig(CombineRequest request, string outputRuntime, bool preserveOtherComponents)
+    private static void SynthesizeConfig(CombineRequest request, MergePreview plan, IniDocument output)
     {
-        var outputConfigPath = Path.Combine(outputRuntime, "Config.ini");
-        Directory.CreateDirectory(outputRuntime);
-        if (!File.Exists(outputConfigPath))
+        var generatedKeys = output.GetSection("Config");
+        foreach (var decision in plan.Decisions.Where(x => x.RelativePath.StartsWith("Gen\\NDF\\", StringComparison.OrdinalIgnoreCase)
+                     && x.RelativePath.EndsWith(".ndfbin", StringComparison.OrdinalIgnoreCase)))
         {
-            throw new CombineException("WARNO's generated local mod Config.ini is missing.");
+            var key = decision.RelativePath[8..^7].Replace('\\', '/');
+            var winner = decision.Kind is MergeDecisionKind.OtherOnly or MergeDecisionKind.OtherOverride ? request.OtherMod : request.UltiMod;
+            var keys = winner.Kind == ModKind.EditableSource ? generatedKeys : winner.ConfigKeys;
+            if (!keys.TryGetValue(key, out var fingerprint) || string.IsNullOrWhiteSpace(fingerprint))
+                throw new CombineException($"{winner.Name}'s selected database {decision.RelativePath} has no matching manifest fingerprint ({key}). Refresh or regenerate that input.");
+            output.Set("Config", key, fingerprint);
         }
-
-        var output = IniDocument.Load(outputConfigPath);
         output.Set("Properties", "Name", request.OutputName);
-        output.Set("Properties", "TagList", string.Join(',', request.OtherMod.Tags
-            .Union(request.UltiMod.Tags, StringComparer.OrdinalIgnoreCase)
-            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)));
+        output.Set("Properties", "TagList", string.Join(',', request.OtherMod.Tags.Union(request.UltiMod.Tags, StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase)));
         output.Set("Properties", "ID", "0");
-        output.Set("Properties", "DeckFormatVersion", Math.Max(
-            request.OtherMod.DeckFormatVersion,
-            request.UltiMod.DeckFormatVersion).ToString());
-
-        foreach (var pair in request.OtherMod.ConfigKeys)
-        {
-            if (output.Get("Config", pair.Key) is null)
-            {
-                output.Set("Config", pair.Key, pair.Value);
-            }
-        }
-
-        foreach (var pair in request.UltiMod.ConfigKeys)
-        {
-            output.Set("Config", pair.Key, pair.Value);
-        }
-
-        if (preserveOtherComponents && request.OtherMod.ConfigKeys.TryGetValue("UI/Components", out var componentsFingerprint))
-        {
-            output.Set("Config", "UI/Components", componentsFingerprint);
-        }
-
-        output.Save(outputConfigPath);
+        output.Set("Properties", "DeckFormatVersion", Math.Max(output.GetInt("Properties", "DeckFormatVersion"),
+            Math.Max(request.OtherMod.DeckFormatVersion, request.UltiMod.DeckFormatVersion)).ToString());
     }
 
-    private static void VerifyCompiledPlan(
-        IReadOnlyDictionary<string, string> expectedFiles,
-        string staging,
-        Action<int, string> report)
-    {
-        var index = 0;
-        foreach (var expectedFile in expectedFiles.OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase))
-        {
-            var actual = FileSystemOps.SafeCombine(staging, expectedFile.Key);
-            if (!File.Exists(actual))
-            {
-                throw new CombineException($"The staged package is missing {expectedFile.Key}.");
-            }
-
-            if (!File.Exists(expectedFile.Value)
-                || !SourceDeltaAnalyzer.ComputeSha256(actual).Equals(
-                    SourceDeltaAnalyzer.ComputeSha256(expectedFile.Value),
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                throw new CombineException($"Precedence verification failed for {expectedFile.Key}.");
-            }
-
-            index++;
-            ReportFileProgress(report, 64, 76, index, expectedFiles.Count, "Verifying precedence");
-        }
-    }
-
-    private static void VerifyResult(
-        CombineRequest request,
-        string outputSource,
-        string outputRuntime,
-        IReadOnlyList<string>? compiledPaths,
-        Action<string> log,
-        Action<int, string> report)
-    {
-        if (!File.Exists(Path.Combine(outputRuntime, "Config.ini")))
-        {
-            throw new CombineException("The combined runtime Config.ini is missing.");
-        }
-
-        var outputGen = Path.Combine(outputSource, "Gen");
-        var runtimeGen = Path.Combine(outputRuntime, "Gen");
-        if (!Directory.Exists(outputGen) || !Directory.Exists(runtimeGen))
-        {
-            throw new CombineException("The combined Gen output is incomplete.");
-        }
-
-        if (request.OtherMod.Kind == ModKind.EditableSource
-            && request.UltiMod.Kind == ModKind.EditableSource)
-        {
-            for (var index = 0; index < request.Preview.Decisions.Count; index++)
-            {
-                var decision = request.Preview.Decisions[index];
-                var actual = FileSystemOps.SafeCombine(outputSource, decision.RelativePath);
-                if (decision.Kind == MergeDecisionKind.Delete)
-                {
-                    if (File.Exists(actual))
-                    {
-                        throw new CombineException($"Deletion verification failed for {decision.RelativePath}.");
-                    }
-                    ReportFileProgress(report, 86, 99, index + 1, request.Preview.Decisions.Count, "Final verification");
-                    continue;
-                }
-
-                var winnerRoot = decision.Kind is MergeDecisionKind.UltiOnly or MergeDecisionKind.UltiOverride
-                    ? request.UltiMod.RootPath
-                    : request.OtherMod.RootPath;
-                VerifySameFile(actual, FileSystemOps.SafeCombine(winnerRoot, decision.RelativePath), decision.RelativePath);
-                ReportFileProgress(report, 86, 99, index + 1, request.Preview.Decisions.Count, "Final verification");
-            }
-        }
-        else
-        {
-            var paths = compiledPaths
-                ?? throw new CombineException("The compiled payload verification plan is missing.");
-            for (var index = 0; index < paths.Count; index++)
-            {
-                var path = paths[index];
-                var actual = FileSystemOps.SafeCombine(outputRuntime, path);
-                VerifySameFile(actual, FileSystemOps.SafeCombine(outputSource, path), path);
-                ReportFileProgress(report, 86, 99, index + 1, paths.Count, "Final verification");
-            }
-        }
-
-        log($"Verified {(compiledPaths?.Count ?? request.Preview.Decisions.Count)} merge decisions.");
-    }
-
-    private static void ReportFileProgress(
-        Action<int, string> report,
-        int startPercent,
-        int endPercent,
-        int completed,
-        int total,
-        string stage)
-    {
-        if (total <= 0 || (completed != total && completed % 25 != 0))
-        {
-            return;
-        }
-
-        var percent = startPercent + (int)Math.Round(
-            (endPercent - startPercent) * (completed / (double)total));
-        report(percent, stage);
-    }
-
-    private static void VerifySameFile(string actual, string expected, string relativePath)
+    private static void VerifySameFile(string actual, string expected, string relativePath, CancellationToken token)
     {
         if (!File.Exists(actual) || !File.Exists(expected)
-            || !SourceDeltaAnalyzer.ComputeSha256(actual).Equals(
-                SourceDeltaAnalyzer.ComputeSha256(expected), StringComparison.OrdinalIgnoreCase))
-        {
-            throw new CombineException($"Final precedence verification failed for {relativePath}.");
-        }
+            || SourceDeltaAnalyzer.ComputeSha256(actual, token) != SourceDeltaAnalyzer.ComputeSha256(expected, token))
+            throw new CombineException($"Precedence verification failed for {relativePath}.");
     }
 }

@@ -7,15 +7,15 @@ public sealed class ModScanner
         "ModData", "Utils", "ExampleAssets"
     };
 
-    public IReadOnlyList<ModDescriptor> Scan(WarnoPaths paths)
+    public IReadOnlyList<ModDescriptor> Scan(WarnoPaths paths, CancellationToken cancellationToken = default)
     {
         var mods = new List<ModDescriptor>();
-        ScanEditable(paths, mods);
-        ScanWorkshop(paths, mods);
+        ScanEditable(paths, mods, cancellationToken);
+        ScanWorkshop(paths, mods, cancellationToken);
         return mods.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
-    private static void ScanEditable(WarnoPaths paths, ICollection<ModDescriptor> mods)
+    private static void ScanEditable(WarnoPaths paths, ICollection<ModDescriptor> mods, CancellationToken cancellationToken)
     {
         if (!Directory.Exists(paths.ModsRoot))
         {
@@ -24,8 +24,11 @@ public sealed class ModScanner
 
         foreach (var directory in Directory.EnumerateDirectories(paths.ModsRoot))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var name = Path.GetFileName(directory);
             if (ReservedModDirectories.Contains(name)
+                || name.Contains(".warno-moderator-backup-", StringComparison.OrdinalIgnoreCase)
+                || name.Contains(".warno-moderator-incomplete-", StringComparison.OrdinalIgnoreCase)
                 || !File.Exists(Path.Combine(directory, "base.zip"))
                 || !Directory.Exists(Path.Combine(directory, "GameData"))
                 || !Directory.Exists(Path.Combine(directory, "CommonData")))
@@ -38,7 +41,7 @@ public sealed class ModScanner
         }
     }
 
-    private static void ScanWorkshop(WarnoPaths paths, ICollection<ModDescriptor> mods)
+    private static void ScanWorkshop(WarnoPaths paths, ICollection<ModDescriptor> mods, CancellationToken cancellationToken)
     {
         if (!Directory.Exists(paths.WorkshopRoot))
         {
@@ -47,6 +50,7 @@ public sealed class ModScanner
 
         foreach (var directory in Directory.EnumerateDirectories(paths.WorkshopRoot))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var configPath = Path.Combine(directory, "Config.ini");
             if (!File.Exists(configPath))
             {
@@ -105,7 +109,6 @@ public sealed class ModScanner
             kind,
             workshopId,
             modGen >= 0 ? modGen : ReadGenVersion(root),
-            config?.GetInt("Properties", "Version") ?? 0,
             config?.GetInt("Properties", "DeckFormatVersion") ?? 0,
             tags,
             config?.GetSection("Config") ?? new Dictionary<string, string>());

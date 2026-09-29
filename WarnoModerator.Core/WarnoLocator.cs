@@ -29,7 +29,6 @@ public sealed class WarnoLocator
                     "Saved Games", "EugenSystems", "WARNO", "mod");
 
                 return new WarnoPaths(
-                    steamRoot,
                     warnoRoot,
                     Path.Combine(warnoRoot, "Mods"),
                     Path.Combine(library, "steamapps", "workshop", "content", "1611600"),
@@ -52,13 +51,11 @@ public sealed class WarnoLocator
 
         var common = Directory.GetParent(fullRoot)?.Parent?.Parent;
         var library = common?.FullName ?? fullRoot;
-        var steamRoot = Directory.GetParent(library)?.FullName ?? library;
         var savedMods = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             "Saved Games", "EugenSystems", "WARNO", "mod");
 
         return new WarnoPaths(
-            steamRoot,
             fullRoot,
             Path.Combine(fullRoot, "Mods"),
             Path.Combine(library, "steamapps", "workshop", "content", "1611600"),

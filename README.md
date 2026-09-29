@@ -29,11 +29,19 @@ Combined mods made with v1.0.0 under the default generated name are recognized a
 
 WARNO itself generates the combined mod's local identity and compatibility baseline. The app rejects Workshop payloads whose `ModGenVersion` does not match the installed game, preventing game-room version mismatch packages.
 
-No editable files are needed for the normal Workshop workflow. If you are developing from source, editable mods found under `WARNO\Mods` are offered alongside Workshop versions; stale editable generations are rejected.
+No editable files are needed for the normal Workshop workflow. If you are developing from source, editable mods found under `WARNO\Mods` are offered alongside Workshop versions; editable inputs are regenerated in the combined output without modifying their source folders. Mixed previews are marked provisional until generation produces the final compiled plan.
 
 The app launches without requesting administrator access. If WARNO is installed under `Program Files`, Windows may prevent creation inside `WARNO\Mods`; in that case, close the app, right-click `WARNO-UltiAI-MODerator.exe`, and choose **Run as administrator** before creating the combined mod. The app invokes WARNO's bundled Python creation tool directly.
 
-Inputs are never modified. If initial creation fails, the incomplete new output is preserved for inspection. If an update fails, the last working combined mod is restored.
+Inputs are never modified. Failed or cancelled output is moved to a separately named incomplete-output folder for inspection. A rebuild restores each previous output independently. If a file lock prevents recovery, the app reports the backup paths; close programs using those files and refresh mods to retry. Interrupted builds are detected at startup or refresh and can be recovered.
+
+## Preview, reports, and cancellation
+
+- Search preview paths or select **Conflicts only** to focus on differing overlapping files. Identical overlaps are labeled separately.
+- **Export report** saves the complete plan, warnings, and session log as JSON, regardless of the active filter.
+- Editable/Workshop previews are provisional. After generation, the final authoritative plan drives copying, manifest fingerprints, verification, and the displayed report, including catalog fallback.
+- **Cancel** stops input checks, planning, copying, or SDK generation. Rebuild recovery finishes before the app returns to idle. Closing the window during an operation requests cancellation; close it again once recovery finishes.
+- Compiled inputs must have a readable ModGen revision and a manifest fingerprint for every selected NDF database. Refresh incomplete Workshop downloads before retrying.
 
 ## Binary-format limitation
 
