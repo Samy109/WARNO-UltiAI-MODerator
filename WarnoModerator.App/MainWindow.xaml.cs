@@ -131,7 +131,9 @@ public partial class MainWindow : Window
         if (_existing is null || _paths is null || OtherModBox.SelectedItem is not ModDescriptor other
             || UltiModBox.SelectedItem is not ModDescriptor ulti)
         { _status = "Ready to create a new combination."; return; }
-        var paths = _paths;        var current = await Task.Run(() => _fingerprints.ComputeAsync([other, ulti], ProgressReporter(), token), token);
+        var paths = _paths;
+        var progress = ProgressReporter();
+        var current = await Task.Run(() => _fingerprints.ComputeAsync([other, ulti], progress, token), token);
         var changed = new List<string>();
         if (!CombinedModStateStore.FingerprintMatches(_existing.OtherMod, current[0])) changed.Add(other.Name);
         if (!CombinedModStateStore.FingerprintMatches(_existing.PriorityMod, current[1])) changed.Add(ulti.Name);

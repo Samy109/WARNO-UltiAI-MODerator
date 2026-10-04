@@ -1,3 +1,10 @@
+# WARNO UltiAI MODerator v1.4.1
+
+- Fix a crash when selecting a mod pair that already has a combined output (for example Honor or Death + UltiAI). Source-check progress is now reported on the UI thread.
+
+Extract the entire Windows x64 ZIP before running the executable. No rebuild is needed for combinations created with v1.4.0.
+---
+
 # WARNO UltiAI MODerator v1.4.0
 
 - Fix compatibility fingerprints so every selected compiled database uses its winning input's manifest entry. Editable inputs use the freshly generated manifest.
