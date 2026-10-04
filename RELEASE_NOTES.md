@@ -1,13 +1,7 @@
-# WARNO UltiAI MODerator v1.4.1
-
-- Fix a crash when selecting a mod pair that already has a combined output (for example Honor or Death + UltiAI). Source-check progress is now reported on the UI thread.
-
-Extract the entire Windows x64 ZIP before running the executable. No rebuild is needed for combinations created with v1.4.0.
----
-
 # WARNO UltiAI MODerator v1.4.0
 
-- Fix compatibility fingerprints so every selected compiled database uses its winning input's manifest entry. Editable inputs use the freshly generated manifest.
+- Fix compatibility fingerprints so every selected compiled database uses its winning input's manifest entry. Editable inputs use the freshly generated manifest. Per-mod-name databases (`Localisation/<Mod>`, `ResourcePacks/<Mod>`), which WARNO never fingerprints, no longer block combining Workshop mods such as Honor Or Death.
+- Fix a crash when selecting a mod pair that already has a combined output. Source-check progress is now reported on the UI thread.
 - Restore source and runtime backups independently after failed or cancelled builds. Preserve incomplete output and provide recovery paths when files are locked.
 - Detect interrupted builds at startup or refresh and offer recovery; persist the commit before removing backups.
 - Safely ignore malformed tracking records and reject compiled inputs with missing compatibility revisions or selected database fingerprints.

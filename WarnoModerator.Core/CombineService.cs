@@ -187,7 +187,12 @@ public sealed class CombineService(SourceDeltaAnalyzer deltaAnalyzer, IProcessRu
             var winner = decision.Kind is MergeDecisionKind.OtherOnly or MergeDecisionKind.OtherOverride ? request.OtherMod : request.UltiMod;
             var keys = winner.Kind == ModKind.EditableSource ? generatedKeys : winner.ConfigKeys;
             if (!keys.TryGetValue(key, out var fingerprint) || string.IsNullOrWhiteSpace(fingerprint))
+            {
+                // WARNO never fingerprints per-mod-name databases (Localisation/<Mod>, ResourcePacks/<Mod>); the
+                // output gets its own from runtime generation, so an input's copy is inert rather than unverifiable.
+                if (IsInputNamedDatabase(key, request)) continue;
                 throw new CombineException($"{winner.Name}'s selected database {decision.RelativePath} has no matching manifest fingerprint ({key}). Refresh or regenerate that input.");
+            }
             output.Set("Config", key, fingerprint);
         }
         output.Set("Properties", "Name", request.OutputName);
@@ -195,6 +200,18 @@ public sealed class CombineService(SourceDeltaAnalyzer deltaAnalyzer, IProcessRu
         output.Set("Properties", "ID", "0");
         output.Set("Properties", "DeckFormatVersion", Math.Max(output.GetInt("Properties", "DeckFormatVersion"),
             Math.Max(request.OtherMod.DeckFormatVersion, request.UltiMod.DeckFormatVersion)).ToString());
+    }
+
+    private static bool IsInputNamedDatabase(string key, CombineRequest request)
+    {
+        var slash = key.IndexOf('/');
+        if (slash < 0) return false;
+        var folder = key[..slash];
+        if (!folder.Equals("Localisation", StringComparison.OrdinalIgnoreCase)
+            && !folder.Equals("ResourcePacks", StringComparison.OrdinalIgnoreCase)) return false;
+        var name = key[(slash + 1)..];
+        return name.Equals(request.OtherMod.Name, StringComparison.OrdinalIgnoreCase)
+            || name.Equals(request.UltiMod.Name, StringComparison.OrdinalIgnoreCase);
     }
 
     private static void VerifySameFile(string actual, string expected, string relativePath, CancellationToken token)
