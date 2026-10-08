@@ -179,7 +179,8 @@ public partial class MainWindow : Window
         var request = await GetRequestAsync(rebuild, token);
         DisplayPreview(request.Preview);
         var action = rebuild ? "Rebuild" : "Create";
-        if (MessageBox.Show($"{action} '{request.OutputName}'?\n\n{request.Preview.Decisions.Count:N0} preview paths; {request.Preview.OverrideCount:N0} differing files replaced by UltiAI."
+        if (MessageBox.Show($"{action} '{request.OutputName}'?\n\n{request.Preview.Decisions.Count:N0} preview paths; {request.Preview.UltiAppliedCount:N0} UltiAI files applied "
+            + $"({request.Preview.OverrideCount:N0} replace the other mod's version, {request.Preview.UltiAppliedCount - request.Preview.OverrideCount:N0} added)."
             + (request.Preview.Provisional ? "\nEditable input will be regenerated; the final report will show the exact compiled conflicts." : ""),
             "Confirm merge", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
         var log = new Progress<string>(Log);
@@ -250,7 +251,7 @@ public partial class MainWindow : Window
             (!ConflictsOnlyBox.IsChecked.GetValueOrDefault() || (d.IsCollision && !d.Identical))
             && (query.Length == 0 || d.RelativePath.Contains(query, StringComparison.OrdinalIgnoreCase))).ToArray();
         PreviewGrid.ItemsSource = decisions;
-        SummaryText.Text = $"{(_preview.Provisional ? "Provisional · " : "")}{decisions.Length:N0}/{_preview.Decisions.Count:N0} paths · {_preview.OverrideCount:N0} UltiAI replacements";
+        SummaryText.Text = $"{(_preview.Provisional ? "Provisional · " : "")}{decisions.Length:N0}/{_preview.Decisions.Count:N0} paths · {_preview.UltiAppliedCount:N0} UltiAI files applied ({_preview.OverrideCount:N0} replacing)";
     }
 
     private async void Export_Click(object sender, RoutedEventArgs e)

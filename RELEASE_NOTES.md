@@ -1,3 +1,13 @@
+# WARNO UltiAI MODerator v1.4.1
+
+- Fix a crash when selecting a mod pair that already has a combined output. Source-check progress is now reported on the UI thread.
+- Fix combining mods that ship extra unfingerprinted databases such as `Localisation/<Mod>_test` (for example WestFulda). Any unfingerprinted `Localisation/` or `ResourcePacks/` database is now treated as inert instead of aborting the merge.
+- The merge preview and confirmation now count UltiAI files applied, separating replacements from additions.
+
+Extract the entire Windows x64 ZIP before running the executable. No rebuild is needed for combinations created with v1.4.0.
+
+---
+
 # WARNO UltiAI MODerator v1.4.0
 
 - Fix compatibility fingerprints so every selected compiled database uses its winning input's manifest entry. Editable inputs use the freshly generated manifest. Per-mod-name databases (`Localisation/<Mod>`, `ResourcePacks/<Mod>`), which WARNO never fingerprints, no longer block combining Workshop mods such as Honor Or Death.

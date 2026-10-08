@@ -31,6 +31,7 @@ public sealed record MergePreview(string OutputName, ModDescriptor OtherMod, Mod
     IReadOnlyList<MergeDecision> Decisions, IReadOnlyList<string> Warnings, bool Provisional = false)
 {
     public int OverrideCount => Decisions.Count(x => x.Kind == MergeDecisionKind.UltiOverride && !x.Identical);
+    public int UltiAppliedCount => Decisions.Count(x => x.Kind is MergeDecisionKind.UltiOverride or MergeDecisionKind.UltiOnly && !x.Identical);
 }
 
 public sealed record CombineRequest(WarnoPaths Paths, ModDescriptor OtherMod, ModDescriptor UltiMod,

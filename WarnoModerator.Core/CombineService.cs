@@ -209,9 +209,9 @@ public sealed class CombineService(SourceDeltaAnalyzer deltaAnalyzer, IProcessRu
         var folder = key[..slash];
         if (!folder.Equals("Localisation", StringComparison.OrdinalIgnoreCase)
             && !folder.Equals("ResourcePacks", StringComparison.OrdinalIgnoreCase)) return false;
-        var name = key[(slash + 1)..];
-        return name.Equals(request.OtherMod.Name, StringComparison.OrdinalIgnoreCase)
-            || name.Equals(request.UltiMod.Name, StringComparison.OrdinalIgnoreCase);
+        // Mods ship extra per-mod databases such as Localisation/<Mod>_test, so any database in these folders
+        // is treated as inert when unfingerprinted; the output regenerates its own at runtime.
+        return true;
     }
 
     private static void VerifySameFile(string actual, string expected, string relativePath, CancellationToken token)
