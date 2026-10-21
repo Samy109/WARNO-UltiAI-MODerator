@@ -29,6 +29,7 @@ public sealed class ModScanner
             if (ReservedModDirectories.Contains(name)
                 || name.Contains(".warno-moderator-backup-", StringComparison.OrdinalIgnoreCase)
                 || name.Contains(".warno-moderator-incomplete-", StringComparison.OrdinalIgnoreCase)
+                || File.Exists(Path.Combine(directory, CombinedModStateStore.FileName))
                 || !File.Exists(Path.Combine(directory, "base.zip"))
                 || !Directory.Exists(Path.Combine(directory, "GameData"))
                 || !Directory.Exists(Path.Combine(directory, "CommonData")))

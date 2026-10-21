@@ -2,16 +2,18 @@ namespace WarnoModerator.Core;
 
 public sealed class CombinationHealth
 {
-public async Task<string> RuntimeHashAsync(string root, CancellationToken cancellationToken = default)
+    public async Task<string> RuntimeHashAsync(string root, CancellationToken cancellationToken = default,
+        IProgress<CombineProgress>? progress = null)
     {
         var descriptor = new ModDescriptor("Combined output", root, ModKind.WorkshopCompiled,
             null, null, 0, [], new Dictionary<string, string>());
-        return (await new ModFingerprintService().ComputeAsync([descriptor], cancellationToken: cancellationToken))[0].Fingerprint;
+        return (await new ModFingerprintService().ComputeAsync([descriptor], progress, cancellationToken, "Checking combined output"))[0].Fingerprint;
     }
 
     public string GameHash(WarnoPaths paths, CancellationToken cancellationToken = default) => SourceDeltaAnalyzer.ComputeSha256(paths.ModDataBaseZip, cancellationToken);
 
-    public async Task<string> CheckAsync(WarnoPaths paths, CombinedModState state, CancellationToken cancellationToken = default)
+    public async Task<string> CheckAsync(WarnoPaths paths, CombinedModState state, CancellationToken cancellationToken = default,
+        IProgress<CombineProgress>? progress = null)
     {
         var runtime = Path.Combine(paths.SavedModsRoot, state.OutputName);
         if (!File.Exists(Path.Combine(runtime, "Config.ini")) || !Directory.Exists(Path.Combine(runtime, "Gen"))
@@ -21,7 +23,7 @@ public async Task<string> RuntimeHashAsync(string root, CancellationToken cancel
             return "Rebuild once to verify and track the existing output.";
         if (state.GameFingerprint != GameHash(paths, cancellationToken))
             return "WARNO build data changed. Rebuild required.";
-        if (state.RuntimeFingerprint != await RuntimeHashAsync(runtime, cancellationToken))
+        if (state.RuntimeFingerprint != await RuntimeHashAsync(runtime, cancellationToken, progress))
             return "Combined output changed. Rebuild required.";
         return "Combined output matches the last merge. You can rebuild again.";
     }

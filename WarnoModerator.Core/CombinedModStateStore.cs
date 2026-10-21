@@ -12,8 +12,7 @@ public sealed class CombinedModStateStore
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
 
-    public IReadOnlyList<CombinedModState> FindAllForSources(WarnoPaths paths, ModDescriptor other,
-        ModDescriptor priority, CancellationToken token = default)
+    public IReadOnlyList<CombinedModState> FindAll(WarnoPaths paths, CancellationToken token = default)
     {
         if (!Directory.Exists(paths.ModsRoot)) return [];
         var results = new List<CombinedModState>();
@@ -21,10 +20,18 @@ public sealed class CombinedModStateStore
         {
             token.ThrowIfCancellationRequested();
             var state = TryLoad(directory);
-            if (state is not null && SamePath(state.OtherMod.RootPath, other.RootPath)
-                && SamePath(state.PriorityMod.RootPath, priority.RootPath)) results.Add(state);
+            if (state is not null) results.Add(state);
         }
         return results.OrderBy(state => state.OutputName, StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    public IReadOnlyList<CombinedModState> FindAllForSources(WarnoPaths paths, ModDescriptor other,
+        ModDescriptor priority, CancellationToken token = default)
+    {
+        return FindAll(paths, token)
+            .Where(state => SamePath(state.OtherMod.RootPath, other.RootPath)
+                && SamePath(state.PriorityMod.RootPath, priority.RootPath))
+            .ToArray();
     }
 
     public static string SuggestNewOutputName(WarnoPaths paths, string baseName)

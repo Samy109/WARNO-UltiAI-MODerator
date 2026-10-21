@@ -14,11 +14,11 @@ public sealed record ModDescriptor(string Name, string RootPath, ModKind Kind, s
     IReadOnlyDictionary<string, string> ConfigKeys)
 {
     public string KindLabel => Kind == ModKind.WorkshopCompiled
-        ? $"Workshop #{WorkshopId}" : "Editable SDK source";
+        ? $"Workshop {WorkshopId}" : "Editable source";
     public string ModGenLabel => ModGenVersion is int v and >= 0 ? $"ModGen {v}" : "ModGen n/a";
     public string DisplayName => Kind == ModKind.WorkshopCompiled
-        ? $"{Name}  •  Workshop {WorkshopId}{(ModGenVersion is int v and >= 0 ? $" (ModGen {v})" : "")}"
-        : $"{Name}  •  Editable SDK source";
+        ? $"{Name}  •  Workshop {WorkshopId}"
+        : $"{Name}  •  Editable source";
     public string GenPath => Path.Combine(RootPath, "Gen");
     public string BaseZipPath => Path.Combine(RootPath, "base.zip");
 }

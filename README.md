@@ -18,10 +18,10 @@ Editable SDK mods and UltiAIDEV remain supported as optional developer workflows
 
 1. Subscribe to **UltiAI** in the Steam Workshop and let Steam finish downloading it.
 2. Subscribe to the Base Mod (Workshop mod) you want to combine.
-3. Download the release ZIP, extract the entire folder, then run `WARNO-UltiAI-MODerator.exe`. Choose **1. Base Mod (Mod to Combine)** and **2. Priority Mod (UltiAI)**; the merge plan and file breakdown appear automatically. Do not run the executable from inside the ZIP.
+3. Download the release ZIP, extract the entire folder, then run `WARNO-UltiAI-MODerator.exe`. Choose **Base mod** and **Priority mod (UltiAI)**; the merge preview appears automatically. Do not run the executable from inside the ZIP.
 4. Click **Create as New**. The app creates a local combined mod, verifies every planned output path, and records one compact fingerprint for each source mod.
 
-When you select the same source mods again, choose an output under **3. Existing Combined Mod (Rebuild)** to update or rebuild it. The app checks that output and reports source updates, missing or altered output, changes to WARNO build data, or a failed check. **Update and Rebuild** is available when sources changed; **Rebuild Existing** remains available even when they did not. To keep the selected merge and make a separate one, use the suggested unused **4. New Combined Mod Name (Create)** or enter another unused name, then click **Create as New**. Each output can be selected and rebuilt independently.
+When you select the same source mods again (or launch the app with an existing combined mod), choose an output under **Existing merge** to update or rebuild it. The app checks that output and reports source updates, missing or altered output, changes to WARNO build data, or a failed check. **Update and Rebuild** is available when sources changed; **Rebuild Existing** remains available even when they did not. To keep the selected merge and make a separate one, use the suggested unused **New mod name** or enter another unused name, then click **Create as New**. Each output can be selected and rebuilt independently.
 
 Rebuilding checks the inputs again and safeguards the previous combination until generation, verification, and saving the update record succeed. If source files or WARNO build data change during the merge, it stops and restores the previous combination. Older records require one rebuild to begin tracking output integrity.
 
@@ -37,9 +37,9 @@ Inputs are never modified. Failed or cancelled output is moved to a separately n
 
 ## Preview, reports, and cancellation
 
-- Filter preview rows by path, category, winning mod, or decision, or toggle **Conflicts only** / **UltiAI changes only** to focus on overridden or newly added files. Identical overlaps and Base Mod UI overrides are labeled with distinct badges.
-- **Export JSON Report** saves the complete plan, summary breakdown, merge notes, and diagnostic session log as JSON, regardless of the active filter.
-- Editable/Workshop previews are marked **PROVISIONAL PREVIEW**. After generation, the final authoritative plan drives copying, manifest fingerprints, verification, and the displayed report, including catalog fallback.
+- Search preview rows by path, decision, winning mod, or reason, or select **Conflicts only** to focus on differing overlapping files. Each row displays a color-coded **Decision** badge (`UltiAI Override`, `UltiAI Added`, `Base UI Kept`, `Base Mod Kept`, `Identical`).
+- **Export report** saves the complete plan, summary breakdown, warnings, and diagnostic session log as JSON, regardless of the active filter.
+- Editable/Workshop previews are marked provisional. After generation, the final authoritative plan drives copying, manifest fingerprints, verification, and the displayed report, including catalog fallback.
 - **Cancel** stops input checks, planning, copying, or SDK generation. Rebuild recovery finishes before the app returns to idle. Closing the window during an operation requests cancellation; close it again once recovery finishes.
 - Compiled inputs must have a readable ModGen revision and a manifest fingerprint for every selected NDF database. Refresh incomplete Workshop downloads before retrying.
 

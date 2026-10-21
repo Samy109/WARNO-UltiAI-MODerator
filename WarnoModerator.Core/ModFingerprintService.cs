@@ -9,9 +9,10 @@ public sealed class ModFingerprintService
     public async Task<IReadOnlyList<SourceModFingerprint>> ComputeAsync(
         IReadOnlyList<ModDescriptor> mods,
         IProgress<CombineProgress>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string stageLabel = "Checking source mods")
     {
-        progress?.Report(new CombineProgress(0, "Checking source mods"));
+        progress?.Report(new CombineProgress(0, stageLabel));
 
         var filesByMod = mods.Select(mod => new
         {
@@ -20,13 +21,11 @@ public sealed class ModFingerprintService
         }).ToArray();
         var totalFiles = filesByMod.Sum(item => item.Files.Length);
         var completedFiles = 0;
-        var results = new List<SourceModFingerprint>(mods.Count);
-
-        foreach (var item in filesByMod)
+        var tasks = filesByMod.Select(item => Task.Run(() =>
         {
             cancellationToken.ThrowIfCancellationRequested();
             using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-            var buffer = new byte[1024 * 128];
+            var buffer = new byte[1024 * 512];
 
             foreach (var file in item.Files)
             {
@@ -37,37 +36,39 @@ public sealed class ModFingerprintService
                 var header = Encoding.UTF8.GetBytes(relativePath + "\0" + new FileInfo(file).Length + "\0");
                 hash.AppendData(header);
 
-                await using var stream = new FileStream(
+                using var stream = new FileStream(
                     file,
                     FileMode.Open,
                     FileAccess.Read,
                     FileShare.ReadWrite | FileShare.Delete,
-                    1024 * 128,
-                    FileOptions.Asynchronous | FileOptions.SequentialScan);
+                    1024 * 512,
+                    FileOptions.SequentialScan);
                 int bytesRead;
-                while ((bytesRead = await stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false)) > 0)
+                while ((bytesRead = stream.Read(buffer, 0, buffer.Length)) > 0)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     hash.AppendData(buffer, 0, bytesRead);
                 }
 
                 hash.AppendData([0]);
-                completedFiles++;
-                if (completedFiles == totalFiles || completedFiles % 25 == 0)
+                var done = Interlocked.Increment(ref completedFiles);
+                if (done == totalFiles || done % 25 == 0)
                 {
                     var percent = totalFiles == 0
                         ? 100
-                        : (int)Math.Round(completedFiles * 100d / totalFiles);
-                    progress?.Report(new CombineProgress(percent, "Checking source mods"));
+                        : (int)Math.Round(done * 100d / totalFiles);
+                    progress?.Report(new CombineProgress(percent, stageLabel));
                 }
             }
 
-            results.Add(new SourceModFingerprint(
+            return new SourceModFingerprint(
                 item.Mod.Name,
                 Path.GetFullPath(item.Mod.RootPath),
-                Convert.ToHexString(hash.GetHashAndReset())));
-        }
+                Convert.ToHexString(hash.GetHashAndReset()));
+        }, cancellationToken)).ToArray();
 
-        progress?.Report(new CombineProgress(100, "Source check complete"));
+        var results = await Task.WhenAll(tasks).ConfigureAwait(false);
+        progress?.Report(new CombineProgress(100, stageLabel));
         return results;
     }
 
