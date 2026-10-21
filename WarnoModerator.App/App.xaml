@@ -15,6 +15,9 @@
         <SolidColorBrush x:Key="TextBrush" Color="#F2F3EA"/>
         <SolidColorBrush x:Key="MutedBrush" Color="#BAC1AF"/>
         <SolidColorBrush x:Key="LogBrush" Color="#0E130D"/>
+        <SolidColorBrush x:Key="SecondaryButtonBrush" Color="#2C3729"/>
+        <SolidColorBrush x:Key="SecondaryButtonHoverBrush" Color="#394735"/>
+        <SolidColorBrush x:Key="SecondaryButtonPressedBrush" Color="#222B1F"/>
 
         <Style TargetType="Window">
             <Setter Property="Background" Value="{StaticResource BackgroundBrush}"/>
@@ -24,7 +27,7 @@
         </Style>
 
         <Style TargetType="Button">
-            <Setter Property="Padding" Value="16,9"/>
+            <Setter Property="Padding" Value="15,8"/>
             <Setter Property="Margin" Value="4"/>
             <Setter Property="Background" Value="{StaticResource AccentBrush}"/>
             <Setter Property="Foreground" Value="#FFFFFF"/>
@@ -32,6 +35,7 @@
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="ToolTipService.ShowOnDisabled" Value="True"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
@@ -48,6 +52,34 @@
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
+        </Style>
+
+        <Style x:Key="SecondaryButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Background" Value="{StaticResource SecondaryButtonBrush}"/>
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+            <Setter Property="BorderBrush" Value="#617257"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ButtonBorder" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="4" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="ButtonBorder" Property="Background" Value="{StaticResource SecondaryButtonHoverBrush}"/></Trigger>
+                            <Trigger Property="IsPressed" Value="True"><Setter TargetName="ButtonBorder" Property="Background" Value="{StaticResource SecondaryButtonPressedBrush}"/></Trigger>
+                            <Trigger Property="IsEnabled" Value="False"><Setter TargetName="ButtonBorder" Property="Opacity" Value="0.45"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="SmallSecondaryButtonStyle" TargetType="Button" BasedOn="{StaticResource SecondaryButtonStyle}">
+            <Setter Property="Padding" Value="10,4"/>
+            <Setter Property="Margin" Value="4,0,0,0"/>
+            <Setter Property="FontSize" Value="11.5"/>
         </Style>
 
         <Style TargetType="TextBox">
@@ -83,7 +115,7 @@
         </Style>
 
         <DataTemplate x:Key="ModComboItemTemplate">
-            <TextBlock Text="{Binding DisplayName}" Foreground="{StaticResource InputTextBrush}"/>
+            <TextBlock Text="{Binding DisplayName}" Foreground="{StaticResource InputTextBrush}" TextTrimming="CharacterEllipsis"/>
         </DataTemplate>
 
         <Style TargetType="DataGrid">

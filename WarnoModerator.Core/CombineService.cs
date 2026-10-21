@@ -29,9 +29,16 @@ public sealed class CombineService(SourceDeltaAnalyzer deltaAnalyzer, IProcessRu
         if (!rebuild && exists) throw new CombineException("The output already exists. Refresh mods and rebuild it instead.");
         var fingerprints = new ModFingerprintService();
         var health = new CombinationHealth();
+        Log($"[STEP 1/7] Starting {(rebuild ? "rebuild" : "new merge")} for '{request.OutputName}'...");
+        Log($"  Base mod: {request.OtherMod.Name} ({request.OtherMod.KindLabel}, {request.OtherMod.ModGenLabel})");
+        Log($"  Priority mod: {request.UltiMod.Name} ({request.UltiMod.KindLabel}, {request.UltiMod.ModGenLabel})");
         Report(0, "Checking inputs");
+        Log("[STEP 2/7] Computing SHA-256 baseline fingerprints for source mods and WARNO base.zip...");
         var before = await fingerprints.ComputeAsync([request.OtherMod, request.UltiMod], cancellationToken: token).ConfigureAwait(false);
         var gameHash = health.GameHash(request.Paths, token);
+        Log($"  {request.OtherMod.Name} SHA-256: {before[0].Fingerprint[..12]}…");
+        Log($"  {request.UltiMod.Name} SHA-256: {before[1].Fingerprint[..12]}…");
+        Log($"  WARNO ModData\\base.zip SHA-256: {gameHash[..12]}…");
         var planner = new MergePlanner(deltaAnalyzer);
         var sourcePlan = planner.PlanSourceMerge(request.OtherMod, request.UltiMod, token);
         var recovery = new BuildRecovery();
@@ -40,9 +47,17 @@ public sealed class CombineService(SourceDeltaAnalyzer deltaAnalyzer, IProcessRu
         try
         {
             recovery.MoveOriginals(request.Paths, record);
+            if (record.SourceExisted || record.RuntimeExisted)
+                Log($"  Safeguarded existing '{request.OutputName}' folders to recovery backup.");
             Report(5, "Creating local mod");
+            Log($"[STEP 3/7] Running WARNO SDK CreateNewMod.py to initialize '{request.OutputName}'...");
             await RunSdkAsync(request, "CreateNewMod.py", [request.OutputName], request.Paths.ModsRoot, Log, token).ConfigureAwait(false);
             if (!Directory.Exists(outputSource)) throw new CombineException("WARNO did not create the output directory.");
+            if (sourcePlan.Count > 0)
+            {
+                var deletedCount = sourcePlan.Count(x => x.Kind == MergeDecisionKind.Delete);
+                Log($"  Applying {sourcePlan.Count:N0} editable source delta file(s) ({sourcePlan.Count - deletedCount:N0} copied, {deletedCount:N0} deleted)...");
+            }
             foreach (var decision in sourcePlan)
             {
                 token.ThrowIfCancellationRequested();
@@ -51,19 +66,21 @@ public sealed class CombineService(SourceDeltaAnalyzer deltaAnalyzer, IProcessRu
                 else FileSystemOps.CopyFileAtomic(decision.SourcePath!, destination, token);
             }
             Report(10, "Generating with WARNO");
+            Log($"[STEP 4/7] Running WARNO SDK GenerateMod.py to build local mod identity and Config.ini baseline...");
             await RunSdkAsync(request, "GenerateMod.py", ["WARNO", request.OutputName], outputSource, Log, token).ConfigureAwait(false);
-            var generatedConfig = LoadGeneratedConfig(request, outputRuntime);
+            var generatedConfig = LoadGeneratedConfig(request, outputRuntime, Log);
             MergePreview plan;
             if (request.OtherMod.Kind == ModKind.WorkshopCompiled || request.UltiMod.Kind == ModKind.WorkshopCompiled)
             {
                 var otherRoot = request.OtherMod.Kind == ModKind.WorkshopCompiled ? request.OtherMod.RootPath : outputRuntime;
                 var ultiRoot = request.UltiMod.Kind == ModKind.WorkshopCompiled ? request.UltiMod.RootPath : outputSource;
                 plan = MergePlanner.CreateCompiledPlan(request.OutputName, request.OtherMod, request.UltiMod, otherRoot, ultiRoot, token);
-                ComposeCompiledPayload(request, plan, generatedConfig, outputSource, outputRuntime, Report, token);
+                ComposeCompiledPayload(request, plan, generatedConfig, outputSource, outputRuntime, Log, Report, token);
             }
             else
             {
                 plan = new MergePreview(request.OutputName, request.OtherMod, request.UltiMod, sourcePlan, []);
+                Log($"[STEP 5/7] Verifying {plan.Decisions.Count:N0} merged source file(s) in '{outputSource}'...");
                 foreach (var decision in plan.Decisions)
                 {
                     token.ThrowIfCancellationRequested();
@@ -72,10 +89,12 @@ public sealed class CombineService(SourceDeltaAnalyzer deltaAnalyzer, IProcessRu
                     { if (File.Exists(actual)) throw new CombineException($"Deletion verification failed for {decision.RelativePath}."); }
                     else VerifySameFile(actual, decision.SourcePath!, decision.RelativePath, token);
                 }
+                Log($"[STEP 6/7] Verified generated Config.ini compatibility manifest in '{outputRuntime}'.");
             }
             if (!Directory.Exists(Path.Combine(outputSource, "Gen")) || !Directory.Exists(Path.Combine(outputRuntime, "Gen")))
                 throw new CombineException("WARNO generated incomplete output.");
             Report(92, "Verifying inputs and output");
+            Log("[STEP 7/7] Verifying output runtime SHA-256, input stability, and saving .warno-moderator.json tracking record...");
             var runtimeHash = await health.RuntimeHashAsync(outputRuntime, token).ConfigureAwait(false);
             var after = await fingerprints.ComputeAsync([request.OtherMod, request.UltiMod], cancellationToken: token).ConfigureAwait(false);
             CombinationHealth.VerifyInputs(before, after);
@@ -85,12 +104,13 @@ public sealed class CombineService(SourceDeltaAnalyzer deltaAnalyzer, IProcessRu
                 runtimeHash, gameHash);
             token.ThrowIfCancellationRequested();
             new CombinedModStateStore().Save(outputSource, state);
+            Log($"  Runtime SHA-256: {runtimeHash[..12]}… (inputs and WARNO base.zip verified unchanged during build).");
             result = new CombineResult(outputSource, outputRuntime, plan, state);
             recovery.Complete(request.Paths, record, Log);
         }
         catch (Exception original)
         {
-            Log("Operation stopped; restoring previous outputs independently...");
+            Log("[ROLLBACK] Operation stopped; restoring previous outputs independently...");
             try { recovery.Restore(request.Paths, record, Log); }
             catch (Exception restoration)
             {
@@ -100,7 +120,7 @@ public sealed class CombineService(SourceDeltaAnalyzer deltaAnalyzer, IProcessRu
             throw;
         }
         // Cancellation after the commit cannot turn a completed build into a rollback.
-        Log($"Verified {result.Plan.Decisions.Count} merge decisions. Combination completed successfully.");
+        Log($"[OK] Verified {result.Plan.Decisions.Count:N0} merge decisions ({result.Plan.UltiAppliedCount:N0} UltiAI files applied). Combination completed successfully.");
         operationProgress?.Report(new(100, "Complete"));
         return result;
     }
@@ -127,7 +147,7 @@ public sealed class CombineService(SourceDeltaAnalyzer deltaAnalyzer, IProcessRu
         { throw new CombineException("WARNO\\Mods is not writable. Check permissions or run the app as administrator.", ex); }
     }
 
-    private static IniDocument LoadGeneratedConfig(CombineRequest request, string runtime)
+    private static IniDocument LoadGeneratedConfig(CombineRequest request, string runtime, Action<string> log)
     {
         var path = Path.Combine(runtime, "Config.ini");
         if (!File.Exists(path)) throw new CombineException("WARNO did not generate the compatibility manifest.");
@@ -137,12 +157,14 @@ public sealed class CombineService(SourceDeltaAnalyzer deltaAnalyzer, IProcessRu
         foreach (var input in new[] { request.OtherMod, request.UltiMod }.Where(x => x.Kind == ModKind.WorkshopCompiled))
             if (input.ModGenVersion is null || input.ModGenVersion != version)
                 throw new CombineException($"{input.Name} uses ModGen {input.ModGenVersion}, but installed WARNO requires {version}. Refresh the Workshop subscription.");
+        log($"  Verified installed WARNO ModGenVersion = {version} (matches selected inputs).");
         return config;
     }
 
     private static void ComposeCompiledPayload(CombineRequest request, MergePreview plan, IniDocument generatedConfig,
-        string source, string runtime, Action<int, string> report, CancellationToken token)
+        string source, string runtime, Action<string> log, Action<int, string> report, CancellationToken token)
     {
+        log($"[STEP 5/7] Composing compiled payload ({plan.Decisions.Count:N0} files: {plan.OverrideCount:N0} UltiAI overrides, {plan.UltiAddedCount:N0} UltiAI added, {plan.BaseUiPreservedCount:N0} Base UI kept, {plan.BaseKeptCount:N0} Base Mod kept, {plan.IdenticalCount:N0} identical)...");
         var staging = Path.Combine(source, ".combine-staging-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(staging);
         // The plan is the only source of file winners. Stage and verify before replacing generated inputs.
@@ -154,6 +176,7 @@ public sealed class CombineService(SourceDeltaAnalyzer deltaAnalyzer, IProcessRu
             VerifySameFile(staged, decision.SourcePath!, decision.RelativePath, token);
             if (i % 25 == 0) report(40 + 30 * i / Math.Max(1, plan.Decisions.Count), "Composing and verifying files");
         }
+        log($"  Staged and SHA-256 verified all {plan.Decisions.Count:N0} compiled payload files.");
         SynthesizeConfig(request, plan, generatedConfig);
         foreach (var root in new[] { source, runtime })
         {
@@ -168,12 +191,15 @@ public sealed class CombineService(SourceDeltaAnalyzer deltaAnalyzer, IProcessRu
                 VerifySameFile(destination, staged, decision.RelativePath, token);
             }
         }
+        log($"  Deployed verified payload to Mods\\{request.OutputName} and Saved Games\\...\\mod\\{request.OutputName}.");
         report(85, "Writing compatibility manifest");
         var configPath = Path.Combine(runtime, "Config.ini");
         generatedConfig.Save(configPath);
         var saved = IniDocument.Load(configPath);
-        foreach (var entry in generatedConfig.GetSection("Config"))
+        var configSection = generatedConfig.GetSection("Config");
+        foreach (var entry in configSection)
             if (saved.Get("Config", entry.Key) != entry.Value) throw new CombineException($"Manifest verification failed for {entry.Key}.");
+        log($"[STEP 6/7] Wrote and verified Config.ini manifest ({configSection.Count:N0} NDF database fingerprints, DeckFormatVersion {saved.Get("Properties", "DeckFormatVersion")}, Tags: {saved.Get("Properties", "TagList")}).");
         Directory.Delete(staging, true);
     }
 

@@ -13,8 +13,12 @@ public sealed record ModDescriptor(string Name, string RootPath, ModKind Kind, s
     int? ModGenVersion, int DeckFormatVersion, IReadOnlyList<string> Tags,
     IReadOnlyDictionary<string, string> ConfigKeys)
 {
+    public string KindLabel => Kind == ModKind.WorkshopCompiled
+        ? $"Workshop #{WorkshopId}" : "Editable SDK source";
+    public string ModGenLabel => ModGenVersion is int v and >= 0 ? $"ModGen {v}" : "ModGen n/a";
     public string DisplayName => Kind == ModKind.WorkshopCompiled
-        ? $"{Name}  •  Workshop {WorkshopId}" : $"{Name}  •  Editable source";
+        ? $"{Name}  •  Workshop {WorkshopId}{(ModGenVersion is int v and >= 0 ? $" (ModGen {v})" : "")}"
+        : $"{Name}  •  Editable SDK source";
     public string GenPath => Path.Combine(RootPath, "Gen");
     public string BaseZipPath => Path.Combine(RootPath, "base.zip");
 }
@@ -25,13 +29,35 @@ public sealed record MergeDecision(string RelativePath, MergeDecisionKind Kind, 
     string? SourcePath = null, bool Identical = false, bool Overlap = false)
 {
     public bool IsCollision => Overlap || Kind is MergeDecisionKind.UltiOverride or MergeDecisionKind.OtherOverride;
+    public bool IsUltiChange => !Identical && Kind is MergeDecisionKind.UltiOverride or MergeDecisionKind.UltiOnly;
+    public string ActionKey => Identical ? "Identical" : Kind.ToString();
+    public string ActionLabel => Identical ? "Identical" : Kind switch
+    {
+        MergeDecisionKind.UltiOverride => "UltiAI Override",
+        MergeDecisionKind.UltiOnly => "UltiAI Added",
+        MergeDecisionKind.OtherOverride => "Base UI Kept",
+        MergeDecisionKind.OtherOnly => "Base Mod Kept",
+        MergeDecisionKind.Delete => "Deleted",
+        _ => Kind.ToString()
+    };
+    public string Category => RelativePath.StartsWith("Gen\\NDF\\UI\\", StringComparison.OrdinalIgnoreCase) ? "UI Database"
+        : RelativePath.StartsWith("Gen\\NDF\\", StringComparison.OrdinalIgnoreCase)
+          && RelativePath.EndsWith(".ndfbin", StringComparison.OrdinalIgnoreCase) ? "NDF Database"
+        : RelativePath.Equals("Gen\\ResourceFile\\Catalog.cat", StringComparison.OrdinalIgnoreCase) ? "Asset Catalog"
+        : RelativePath.StartsWith("Gen\\", StringComparison.OrdinalIgnoreCase) ? "Compiled Asset"
+        : "Source File";
 }
 
 public sealed record MergePreview(string OutputName, ModDescriptor OtherMod, ModDescriptor UltiMod,
     IReadOnlyList<MergeDecision> Decisions, IReadOnlyList<string> Warnings, bool Provisional = false)
 {
     public int OverrideCount => Decisions.Count(x => x.Kind == MergeDecisionKind.UltiOverride && !x.Identical);
+    public int UltiAddedCount => Decisions.Count(x => x.Kind == MergeDecisionKind.UltiOnly && !x.Identical);
     public int UltiAppliedCount => Decisions.Count(x => x.Kind is MergeDecisionKind.UltiOverride or MergeDecisionKind.UltiOnly && !x.Identical);
+    public int BaseKeptCount => Decisions.Count(x => x.Kind == MergeDecisionKind.OtherOnly && !x.Identical);
+    public int BaseUiPreservedCount => Decisions.Count(x => x.Kind == MergeDecisionKind.OtherOverride && !x.Identical);
+    public int IdenticalCount => Decisions.Count(x => x.Identical);
+    public int ConflictCount => Decisions.Count(x => x.IsCollision && !x.Identical);
 }
 
 public sealed record CombineRequest(WarnoPaths Paths, ModDescriptor OtherMod, ModDescriptor UltiMod,

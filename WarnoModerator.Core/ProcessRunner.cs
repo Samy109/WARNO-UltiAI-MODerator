@@ -39,11 +39,11 @@ public sealed class ProcessRunner : IProcessRunner
         using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         process.OutputDataReceived += (_, eventArgs) =>
         {
-            if (!string.IsNullOrWhiteSpace(eventArgs.Data)) log(eventArgs.Data);
+            if (!string.IsNullOrWhiteSpace(eventArgs.Data)) log("  [SDK] " + eventArgs.Data.Trim());
         };
         process.ErrorDataReceived += (_, eventArgs) =>
         {
-            if (!string.IsNullOrWhiteSpace(eventArgs.Data)) log("ERROR: " + eventArgs.Data);
+            if (!string.IsNullOrWhiteSpace(eventArgs.Data)) log("  [SDK ERR] " + eventArgs.Data.Trim());
         };
 
         cancellationToken.ThrowIfCancellationRequested();

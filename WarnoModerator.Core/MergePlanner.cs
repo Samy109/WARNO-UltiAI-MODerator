@@ -73,15 +73,20 @@ public sealed class MergePlanner(SourceDeltaAnalyzer deltaAnalyzer)
             var hasOther = otherDelta.TryGetValue(path, out var otherChange);
             var hasUlti = ultiDelta.TryGetValue(path, out var ultiChange);
             var winner = hasUlti ? ultiChange! : otherChange!;
+            var winnerName = hasUlti ? ulti.Name : other.Name;
             var identical = hasOther && hasUlti && otherChange!.Kind == ultiChange!.Kind
                 && (winner.Kind == DeltaKind.Deleted || SameContent(otherChange.SourcePath!, ultiChange.SourcePath!, token));
+            var detail = identical
+                ? "Both mods make the exact same source change (no conflict)."
+                : hasUlti && hasOther
+                    ? $"Conflict resolved: both mods modified this source file; {ulti.Name} takes priority over {other.Name}."
+                    : winner.Kind == DeltaKind.Deleted
+                        ? $"Deleted relative to vanilla base.zip by {winnerName}."
+                        : $"{winner.Kind} source file from {winnerName}.";
             decisions.Add(new MergeDecision(path,
                 winner.Kind == DeltaKind.Deleted ? MergeDecisionKind.Delete :
                     hasUlti ? hasOther ? MergeDecisionKind.UltiOverride : MergeDecisionKind.UltiOnly : MergeDecisionKind.OtherOnly,
-                hasUlti ? ulti.Name : other.Name,
-                identical ? "Both inputs make the same change." : hasUlti && hasOther
-                    ? "Both source mods changed this path; the complete priority file wins."
-                    : $"{winner.Kind} source file.", winner.SourcePath, identical, hasOther && hasUlti));
+                winnerName, detail, winner.SourcePath, identical, hasOther && hasUlti));
         }
         return decisions;
     }
@@ -112,19 +117,25 @@ public sealed class MergePlanner(SourceDeltaAnalyzer deltaAnalyzer)
             var identical = hasOther && hasUlti && SameContent(otherFile!, ultiFile!, token);
             var kind = keepOther ? hasUlti ? MergeDecisionKind.OtherOverride : MergeDecisionKind.OtherOnly
                 : hasOther ? MergeDecisionKind.UltiOverride : MergeDecisionKind.UltiOnly;
+            var detail = identical
+                ? "Identical compiled file in both mods (no conflict)."
+                : kind switch
+                {
+                    MergeDecisionKind.OtherOverride => $"UI conflict resolved: {other.Name}'s UI database is kept over {ulti.Name} to preserve custom interface and division textures.",
+                    MergeDecisionKind.UltiOverride => $"Conflict resolved: {ulti.Name} takes priority and replaces {other.Name}'s compiled file.",
+                    MergeDecisionKind.UltiOnly => $"Added from {ulti.Name} (not present in {other.Name}).",
+                    _ => $"Kept from {other.Name} (not modified by {ulti.Name})."
+                };
             decisions.Add(new MergeDecision(path, kind, keepOther ? other.Name : ulti.Name,
-                identical ? "Identical payload in both inputs." : kind == MergeDecisionKind.OtherOverride
-                    ? "Other mod UI retained to preserve its interface and texture registrations."
-                    : kind == MergeDecisionKind.UltiOverride ? "Complete priority payload replaces the other mod's file."
-                    : "Only this input supplies the selected component.", keepOther ? otherFile : ultiFile, identical));
+                detail, keepOther ? otherFile : ultiFile, identical, hasOther && hasUlti));
         }
         var warnings = new List<string>();
-        if (provisional) warnings.Add("Provisional preview: editable input will be regenerated. The final report will show the exact generated payload and conflicts.");
+        if (provisional) warnings.Add("Provisional preview: editable SDK input will be compiled by WARNO during the build; the final report will reflect the exact compiled files.");
         var collisions = decisions.Count(x => x.Kind == MergeDecisionKind.UltiOverride && !x.Identical && x.RelativePath.EndsWith(".ndfbin", StringComparison.OrdinalIgnoreCase));
-        if (collisions > 0) warnings.Add($"UltiAI replaces {collisions} complete compiled database(s). Object-level merging is unavailable.");
+        if (collisions > 0) warnings.Add($"{ulti.Name} replaces {collisions} overlapping NDF database(s) from {other.Name} (compiled .ndfbin files are atomic and replaced as a whole).");
         if (decisions.Any(x => x.Kind == MergeDecisionKind.OtherOverride && !x.Identical))
-            warnings.Add("The other mod's UI takes precedence. Test end-game labels for additional roles such as Siege.");
-        if (otherFiles.ContainsKey(catalog)) warnings.Add("The other mod's catalog is retained. UltiAI catalog-only cosmetic assets may be unavailable.");
+            warnings.Add($"{other.Name}'s UI/Components.ndfbin is kept over {ulti.Name} to preserve custom division emblems and interface textures. Playtest end-game labels for extra AI roles such as Siege.");
+        if (otherFiles.ContainsKey(catalog)) warnings.Add($"{other.Name}'s asset catalog (Catalog.cat) is retained so its custom assets stay registered; {ulti.Name} catalog-only cosmetic branding may not appear.");
         return new MergePreview(outputName, other, ulti, decisions, warnings, provisional);
     }
 

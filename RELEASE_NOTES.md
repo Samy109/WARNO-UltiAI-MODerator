@@ -1,3 +1,14 @@
+# WARNO UltiAI MODerator v1.5.0
+
+- **Automatic Live Merge Preview & Breakdown**: Selecting a Base Mod and an UltiAI Priority Mod now automatically generates the file-by-file merge plan without requiring a manual preview click, and editing the new mod name keeps the preview intact.
+- **Clearer Terminology & Decision Badges**: Standardized terminology (`Base Mod`, `Priority Mod (UltiAI)`, `Existing Combined Mod`, `New Combined Mod Name`) with live metadata subtitles (`Workshop #<ID>`, `ModGen` revision, NDF database counts, and output availability) and color-coded decision pills (`UltiAI Override`, `UltiAI Added`, `Base UI Kept`, `Base Mod Kept`, `Identical`, `Deleted`) plus file category labels.
+- **Dedicated Merge Notes & Enhanced Filtering**: Added a live Merge Notes callout banner above the precedence table, summary breakdown stat pills, an **UltiAI changes only** filter alongside **Conflicts only**, and multi-column search across paths, categories, actions, and winning mods.
+- **Step-by-Step Diagnostic Logging & Folder Shortcuts**: Added structured `[STEP 1/7]`–`[STEP 7/7]` build logging, SHA-256 baseline/verification summaries, `[SDK]` process output tagging, dynamic status badges (`READY`, `VERIFIED`, `UPDATE AVAILABLE`, `REBUILD NEEDED`, `ATTENTION`), disabled-button explanation tooltips, and one-click buttons to open `WARNO\Mods`, `Saved Games` mods, or copy/clear the diagnostic log.
+
+Extract the entire Windows x64 ZIP before running the executable. No rebuild is needed for combinations created with v1.4.0 or v1.4.1.
+
+---
+
 # WARNO UltiAI MODerator v1.4.1
 
 - Fix a crash when selecting a mod pair that already has a combined output. Source-check progress is now reported on the UI thread.
