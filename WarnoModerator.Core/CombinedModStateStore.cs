@@ -9,7 +9,8 @@ public sealed class CombinedModStateStore
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
     };
 
     public IReadOnlyList<CombinedModState> FindAll(WarnoPaths paths, CancellationToken token = default)
@@ -25,12 +26,13 @@ public sealed class CombinedModStateStore
         return results.OrderBy(state => state.OutputName, StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
-    public IReadOnlyList<CombinedModState> FindAllForSources(WarnoPaths paths, ModDescriptor other,
-        ModDescriptor priority, CancellationToken token = default)
+    /// <summary>Outputs built from exactly the selected mods, in any priority order.</summary>
+    public IReadOnlyList<CombinedModState> FindAllForSources(WarnoPaths paths, IReadOnlyList<ModDescriptor> mods,
+        CancellationToken token = default)
     {
         return FindAll(paths, token)
-            .Where(state => SamePath(state.OtherMod.RootPath, other.RootPath)
-                && SamePath(state.PriorityMod.RootPath, priority.RootPath))
+            .Where(state => state.Sources.Count == mods.Count
+                && mods.All(mod => state.Sources.Any(source => SamePath(source.RootPath, mod.RootPath))))
             .ToArray();
     }
 
@@ -59,9 +61,9 @@ public sealed class CombinedModStateStore
         {
             var state = JsonSerializer.Deserialize<CombinedModState>(File.ReadAllText(statePath), JsonOptions);
             return state is not null
-                && state.SchemaVersion == CombinedModState.CurrentSchemaVersion
-                && ValidFingerprint(state.OtherMod)
-                && ValidFingerprint(state.PriorityMod)
+                && state.SchemaVersion is 1 or CombinedModState.CurrentSchemaVersion
+                && state.Sources.Count >= 2
+                && state.Sources.All(ValidFingerprint)
                 && ValidOutputName(state.OutputName)
                 && state.OutputName.Equals(Path.GetFileName(outputDirectory), StringComparison.OrdinalIgnoreCase)
                 ? state

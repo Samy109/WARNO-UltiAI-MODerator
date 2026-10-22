@@ -1,17 +1,17 @@
 <Window x:Class="WarnoModerator.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="WARNO UltiAI MODerator" Height="820" Width="1180" MinHeight="700" MinWidth="950"
+        Title="WARNO UltiAI MODerator" Height="900" Width="1180" MinHeight="760" MinWidth="950"
         Background="{StaticResource BackgroundBrush}" Foreground="{StaticResource TextBrush}"
         WindowStartupLocation="CenterScreen" Loaded="Window_Loaded" Closing="Window_Closing">
-    <Grid Background="{StaticResource BackgroundBrush}" Margin="24">
+    <Grid Background="{StaticResource BackgroundBrush}" Margin="20,16,20,16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="170"/>
+            <RowDefinition Height="*" MinHeight="220"/><RowDefinition Height="Auto"/><RowDefinition Height="120"/>
         </Grid.RowDefinitions>
         <StackPanel Grid.Row="0" Margin="0,0,0,14">
             <TextBlock Text="WARNO UltiAI MODerator" FontSize="28" FontWeight="Bold" Foreground="#DDE5C5"/>
-            <TextBlock Text="Combine installed Steam Workshop mods directly. UltiAI takes precedence; the base mod keeps its UI components when both provide them." Foreground="{StaticResource MutedBrush}" Margin="0,4,0,0" TextWrapping="Wrap"/>
+            <TextBlock Text="Combine any installed mods. Compiled databases are merged value by value from each mod's changes against vanilla; when mods change the same value, the mod higher in the list wins." Foreground="{StaticResource MutedBrush}" Margin="0,4,0,0" TextWrapping="Wrap"/>
         </StackPanel>
         <Border Grid.Row="1" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="7" Padding="15" Margin="0,0,0,12">
             <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
@@ -23,11 +23,42 @@
         </Border>
         <Border Grid.Row="2" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="7" Padding="15" Margin="0,0,0,12">
             <Grid>
-                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="18"/><ColumnDefinition/><ColumnDefinition Width="18"/><ColumnDefinition/><ColumnDefinition Width="18"/><ColumnDefinition/></Grid.ColumnDefinitions>
-                <StackPanel><TextBlock Text="Base mod" FontWeight="SemiBold"/><ComboBox x:Name="OtherModBox" ItemTemplate="{StaticResource ModComboItemTemplate}" SelectionChanged="Selection_Changed"/></StackPanel>
-                <StackPanel Grid.Column="2"><TextBlock Text="Priority mod (UltiAI)" FontWeight="SemiBold"/><ComboBox x:Name="UltiModBox" ItemTemplate="{StaticResource ModComboItemTemplate}" SelectionChanged="Selection_Changed"/></StackPanel>
-                <StackPanel Grid.Column="4"><TextBlock Text="Existing merge" FontWeight="SemiBold"/><ComboBox x:Name="ExistingMergeBox" DisplayMemberPath="OutputName" SelectionChanged="ExistingMerge_Changed"/></StackPanel>
-                <StackPanel Grid.Column="6"><TextBlock Text="New mod name" FontWeight="SemiBold"/><TextBox x:Name="OutputNameBox" TextChanged="OutputName_Changed"/></StackPanel>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="18"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Top" FontWeight="SemiBold" TextWrapping="Wrap"
+                               Text="Mods to combine · the top mod is primary and wins values that several mods change"/>
+                    <DockPanel DockPanel.Dock="Top">
+                        <Button x:Name="AddModButton" DockPanel.Dock="Right" Content="Add mod" Click="AddMod_Click"/>
+                        <ComboBox x:Name="AvailableModBox" ItemTemplate="{StaticResource ModComboItemTemplate}"/>
+                    </DockPanel>
+                    <UniformGrid DockPanel.Dock="Right" Width="260" Columns="2" VerticalAlignment="Top">
+                        <Button x:Name="PrimaryButton" Content="Make primary" Click="MakePrimary_Click"/>
+                        <Button x:Name="UpButton" Content="Move up" Click="MoveUp_Click"/>
+                        <Button x:Name="DownButton" Content="Move down" Click="MoveDown_Click"/>
+                        <Button x:Name="RemoveButton" Content="Remove" Click="Remove_Click"/>
+                    </UniformGrid>
+                    <ListBox x:Name="MergeOrderList" Margin="4" Height="112" Background="{StaticResource LogBrush}" BorderBrush="{StaticResource BorderBrush}"
+                             Foreground="{StaticResource TextBrush}" SelectionChanged="MergeOrder_SelectionChanged" HorizontalContentAlignment="Stretch">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <DockPanel Margin="2,3">
+                                    <Border DockPanel.Dock="Right" CornerRadius="3" Padding="7,1" Background="#4D3C19" BorderBrush="#9E7B32" BorderThickness="1"
+                                            Visibility="{Binding PrimaryVisibility}">
+                                        <TextBlock Text="PRIMARY" FontSize="11" FontWeight="SemiBold" Foreground="#FFE4A3"/>
+                                    </Border>
+                                    <TextBlock Text="{Binding Rank}" Width="26" Foreground="{StaticResource MutedBrush}"/>
+                                    <TextBlock Text="{Binding Mod.DisplayName}" TextTrimming="CharacterEllipsis"/>
+                                </DockPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </DockPanel>
+                <StackPanel Grid.Column="2">
+                    <TextBlock Text="Existing merge" FontWeight="SemiBold"/>
+                    <ComboBox x:Name="ExistingMergeBox" DisplayMemberPath="OutputName" SelectionChanged="ExistingMerge_Changed"/>
+                    <TextBlock Text="New mod name" FontWeight="SemiBold" Margin="0,10,0,0"/>
+                    <TextBox x:Name="OutputNameBox" TextChanged="OutputName_Changed"/>
+                </StackPanel>
             </Grid>
         </Border>
         <Border Grid.Row="3" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="7" Padding="15">
@@ -36,10 +67,10 @@
                 <DockPanel Grid.Row="1" Margin="0,0,0,8">
                     <Button x:Name="ExportButton" DockPanel.Dock="Right" Content="Export report" Click="Export_Click" IsEnabled="False"/>
                     <CheckBox x:Name="ConflictsOnlyBox" DockPanel.Dock="Right" Content="Conflicts only" Foreground="{StaticResource TextBrush}" VerticalAlignment="Center" Margin="12,0" Checked="Filter_Changed" Unchecked="Filter_Changed"/>
-                    <TextBlock Text="Search paths" VerticalAlignment="Center" Margin="4,0,8,0"/>
-                    <TextBox x:Name="SearchBox" ToolTip="Filter by file path, decision, winning mod, or reason" TextChanged="Filter_Changed"/>
+                    <TextBlock Text="Search" VerticalAlignment="Center" Margin="4,0,8,0"/>
+                    <TextBox x:Name="SearchBox" ToolTip="Filter by file or value path, decision, winning mod, or reason" TextChanged="Filter_Changed"/>
                 </DockPanel>
-                <DataGrid x:Name="PreviewGrid" Grid.Row="2" IsReadOnly="True" AutoGenerateColumns="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal">
+                <DataGrid x:Name="PreviewGrid" Grid.Row="2" IsReadOnly="True" EnableRowVirtualization="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" AutoGenerateColumns="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal">
                     <DataGrid.Columns>
                         <DataGridTextColumn Header="Path" Binding="{Binding RelativePath}" Width="*"/>
                         <DataGridTemplateColumn Header="Decision" Width="135" SortMemberPath="ActionLabel">
@@ -50,17 +81,22 @@
                                         <TextBlock x:Name="ActionPillText" Text="{Binding ActionLabel}" FontSize="11.5" FontWeight="SemiBold" Foreground="#C8D0C0"/>
                                     </Border>
                                     <DataTemplate.Triggers>
-                                        <DataTrigger Binding="{Binding ActionKey}" Value="UltiOverride">
-                                            <Setter TargetName="ActionPill" Property="Background" Value="#4D3C19"/>
-                                            <Setter TargetName="ActionPill" Property="BorderBrush" Value="#9E7B32"/>
-                                            <Setter TargetName="ActionPillText" Property="Foreground" Value="#FFE4A3"/>
-                                        </DataTrigger>
-                                        <DataTrigger Binding="{Binding ActionKey}" Value="UltiOnly">
+                                        <DataTrigger Binding="{Binding ActionKey}" Value="Merged">
                                             <Setter TargetName="ActionPill" Property="Background" Value="#283D1E"/>
                                             <Setter TargetName="ActionPill" Property="BorderBrush" Value="#648C4D"/>
                                             <Setter TargetName="ActionPillText" Property="Foreground" Value="#D4F0C2"/>
                                         </DataTrigger>
-                                        <DataTrigger Binding="{Binding ActionKey}" Value="OtherOverride">
+                                        <DataTrigger Binding="{Binding ActionKey}" Value="Override">
+                                            <Setter TargetName="ActionPill" Property="Background" Value="#4D3C19"/>
+                                            <Setter TargetName="ActionPill" Property="BorderBrush" Value="#9E7B32"/>
+                                            <Setter TargetName="ActionPillText" Property="Foreground" Value="#FFE4A3"/>
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding ActionKey}" Value="ValueConflict">
+                                            <Setter TargetName="ActionPill" Property="Background" Value="#4A2D17"/>
+                                            <Setter TargetName="ActionPill" Property="BorderBrush" Value="#B0703A"/>
+                                            <Setter TargetName="ActionPillText" Property="Foreground" Value="#FFCF9E"/>
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding ActionKey}" Value="Single">
                                             <Setter TargetName="ActionPill" Property="Background" Value="#1D3E3A"/>
                                             <Setter TargetName="ActionPill" Property="BorderBrush" Value="#3E8279"/>
                                             <Setter TargetName="ActionPillText" Property="Foreground" Value="#B3F0E6"/>
@@ -79,7 +115,7 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTextColumn Header="Winner" Binding="{Binding Winner}" Width="150"/>
+                        <DataGridTextColumn Header="Winner" Binding="{Binding Winner}" Width="170"/>
                         <DataGridTextColumn Header="Reason" Binding="{Binding Detail}" Width="340"/>
                     </DataGrid.Columns>
                 </DataGrid>

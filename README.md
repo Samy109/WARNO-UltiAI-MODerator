@@ -1,24 +1,25 @@
 # WARNO UltiAI MODerator
 
-A Windows desktop application designed primarily for Workshop users. It combines an installed Steam Workshop mod directly with the Workshop version of **UltiAI**, without requiring editable mod source files.
+A Windows desktop application designed primarily for Workshop users. It combines **any** number of installed Steam Workshop mods into one local mod, without requiring editable mod source files. UltiAI is listed first and selected as the primary mod by default, but it is no longer required.
 
 Editable SDK mods and UltiAIDEV remain supported as optional developer workflows.
 
 [Download the latest Windows release](https://github.com/Samy109/WARNO-UltiAI-MODerator/releases/latest)
 
-## Precedence model
+## How mods are combined
 
-- Workshop + Workshop UltiAI: WARNO first generates a current local-mod compatibility manifest, then both installed compiled payloads are composed directly. No editable source is required.
-- Editable + editable UltiAI: each mod is compared with its matching `base.zip`. Only changed source files are applied, and the complete UltiAI file wins when both mods changed the same path.
-- Mixed source/Workshop combinations are also supported; the editable side is generated before compiled composition.
-- Compiled `.ndfbin` databases are atomic. They cannot safely be decompiled and merged object-by-object, so an overlapping database is replaced as a whole by UltiAI, except `Gen/NDF/UI/Components.ndfbin`, which comes from the other mod when both provide it. The preview explicitly reports these collisions.
-- Workshop packages with a different `ModGenVersion` are rejected rather than producing a likely broken mod.
+- **Delta merging of compiled databases.** Every Workshop mod ships complete `.ndfbin` databases, so replacing one mod's file with another's would erase the first mod's changes. The app decompiles each database and compares it with the vanilla database of the same WARNO build (`Data\PC\<ModGenVersion>\Glad.dat`) to find exactly what each mod changed. It then combines those changes value by value and recompiles a single database. See [docs/NDFBIN-DECOMPILATION.md](docs/NDFBIN-DECOMPILATION.md).
+- **Priority order.** Mods are listed in priority order. The top mod is the **primary** mod: when several mods change the same value differently, the higher mod wins and the preview lists each value conflict. Changes that don't collide are all kept.
+- **Asset catalogs** (`Catalog.cat`) are merged the same way, so every mod's custom textures, meshes and sounds stay registered. `DeclaredFiles.txt` and `UsedFiles.txt` become the union of all mods' entries.
+- **Other files** (assets, maps, videos) are atomic. A file only one mod provides is always kept; when several mods provide the same file, the highest-priority mod's copy is used. Generator build caches are taken from the mod with the largest compiled payload.
+- **Editable SDK mods** are compared with their matching `base.zip`; changed source files are applied in priority order and compiled by WARNO, then delta merged with any Workshop mods.
+- Workshop packages with different `ModGenVersion`s are rejected rather than producing a likely broken mod.
 
 ## Use
 
-1. Subscribe to **UltiAI** in the Steam Workshop and let Steam finish downloading it.
-2. Subscribe to the Base Mod (Workshop mod) you want to combine.
-3. Download the release ZIP, extract the entire folder, then run `WARNO-UltiAI-MODerator.exe`. Choose **Base mod** and **Priority mod (UltiAI)**; the merge preview appears automatically. Do not run the executable from inside the ZIP.
+1. Subscribe to the Workshop mods you want to combine (for example **UltiAI** and an overhaul mod) and let Steam finish downloading them.
+2. Download the release ZIP, extract the entire folder, then run `WARNO-UltiAI-MODerator.exe`. Do not run the executable from inside the ZIP.
+3. Under **Mods to combine**, pick a mod and click **Add mod** for each one. UltiAI appears first in the list and is added automatically. Use **Make primary**, **Move up** and **Move down** to set the priority order; the top mod is primary. The merge preview updates automatically and shows every delta-merged database and value conflict.
 4. Click **Create as New**. The app creates a local combined mod, verifies every planned output path, and records one compact fingerprint for each source mod.
 
 When you select the same source mods again (or launch the app with an existing combined mod), choose an output under **Existing merge** to update or rebuild it. The app checks that output and reports source updates, missing or altered output, changes to WARNO build data, or a failed check. **Update and Rebuild** is available when sources changed; **Rebuild Existing** remains available even when they did not. To keep the selected merge and make a separate one, use the suggested unused **New mod name** or enter another unused name, then click **Create as New**. Each output can be selected and rebuilt independently.
@@ -37,19 +38,18 @@ Inputs are never modified. Failed or cancelled output is moved to a separately n
 
 ## Preview, reports, and cancellation
 
-- Search preview rows by path, decision, winning mod, or reason, or select **Conflicts only** to focus on differing overlapping files. Each row displays a color-coded **Decision** badge (`UltiAI Override`, `UltiAI Added`, `Base UI Kept`, `Base Mod Kept`, `Identical`).
-- **Export report** saves the complete plan, summary breakdown, warnings, and diagnostic session log as JSON, regardless of the active filter.
-- Editable/Workshop previews are marked provisional. After generation, the final authoritative plan drives copying, manifest fingerprints, verification, and the displayed report, including catalog fallback.
+- Search preview rows by file or value path, decision, winning mod, or reason, or select **Conflicts only** to focus on value conflicts and overridden files. Each row displays a color-coded **Decision** badge (`Delta Merged`, `Value Conflict`, `Priority Override`, `Single Mod`, `Identical`).
+- **Export report** saves the priority order, complete plan, every value conflict, summary breakdown, warnings, and diagnostic session log as JSON, regardless of the active filter.
+- Editable/Workshop previews are marked provisional. After generation, the final authoritative plan drives merging, copying, manifest fingerprints, verification, and the displayed report.
+- Combined mods made by v1.x are recognized and can be rebuilt with v2's delta merging.
 - **Cancel** stops input checks, planning, copying, or SDK generation. Rebuild recovery finishes before the app returns to idle. Closing the window during an operation requests cancellation; close it again once recovery finishes.
 - Compiled inputs must have a readable ModGen revision and a manifest fingerprint for every selected NDF database. Refresh incomplete Workshop downloads before retrying.
 
-## Binary-format limitation
+## Limitations
 
-Workshop `.ndfbin` databases and `Catalog.cat` files are compiled, atomic files; WARNO supplies no supported object-level merger for them. When both mods contain the same NDF database, the complete UltiAI database replaces the Workshop database, except `UI/Components.ndfbin`. For that UI database, the other mod takes precedence to preserve its custom interface and texture registrations. If only UltiAI supplies it, UltiAI's version is retained. The compatibility manifest follows the selected UI payload.
-
-Combined mods may retain vanilla end-game difficulty labels. Additional roles such as Siege require an end-game summary playtest with the other mod's UI.
-
-For Workshop packages with custom assets, the Workshop `Catalog.cat` is retained so those assets remain registered. Catalog binaries cannot be safely combined, so UltiAI assets that exist only through its own catalog (typically cosmetic branding) may not appear. The application reports this before execution. Gameplay NDF precedence is unaffected.
+- Value conflicts are resolved by priority alone. Two mods that rebalance the same unit differently produce the primary mod's value for each conflicting field, which can make an inconsistent design. Review the **Conflicts only** view.
+- Merged databases are written by this app's own compiler rather than Eugen's. Every database round-trips through it losslessly, but playtest each combination in-game.
+- If WARNO's vanilla databases can't be found for the installed build, overlapping databases fall back to whole-file priority, and the preview says so.
 
 ## Development
 

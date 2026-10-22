@@ -1,3 +1,16 @@
+# WARNO UltiAI MODerator v2.0.0
+
+- **Combine any mods, not just UltiAI pairs**: Add as many installed Workshop or editable mods as you like. UltiAI is listed first and added as the primary mod by default, but it is no longer required.
+- **Delta merging of compiled databases**: `.ndfbin` databases are no longer atomic. Each mod's database is decompiled and compared with WARNO's vanilla database for the same build (`Data\PC\<ModGenVersion>\Glad.dat`). Only what each mod actually changed is applied, so mods that touch the same database (for example `Unit`, `Weapon` or `UI/Components`) keep all of their non-conflicting changes.
+- **Choose the primary mod**: Order the mods with **Make primary**, **Move up** and **Move down**. When several mods change the same value differently, the higher mod wins, and every such value conflict appears in the preview and in the exported report.
+- **Merged asset catalogs**: `Catalog.cat` is merged the same way, so every mod's custom textures, meshes and sounds stay registered. `DeclaredFiles.txt` and `UsedFiles.txt` become the union of all mods' entries.
+- **New decision badges**: `Delta Merged`, `Value Conflict`, `Priority Override`, `Single Mod` and `Identical`.
+- **Documentation**: The reverse-engineered `.ndfbin` and `edat` formats are described in `docs/NDFBIN-DECOMPILATION.md`.
+
+Extract the entire Windows x64 ZIP before running the executable. Combined mods made with v1.x are still recognized; rebuild them to replace whole-database overrides with delta merging. Playtest merged combinations in-game.
+
+---
+
 # WARNO UltiAI MODerator v1.5.0
 
 - **Auto-Detect Existing Merges & Live Preview**: Automatically selects your existing combined mod pair at startup, excludes combined outputs from being scanned as editable input mods, and displays the merge preview immediately when switching mods.
