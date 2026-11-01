@@ -177,6 +177,15 @@ every value it collects the mods whose value differs from vanilla:
 * Anything else is a **value conflict**. The highest-priority mod's value wins, and the conflict is reported with the
   value path, the winner and the overridden mods.
 
+**Descriptors** need one extra rule. A `DescriptorId` (tag `0x1A`) names a single object, however many parents reference
+it: one `TPoolElement` can sit in seven pools of `GFX/Skirmish`. The game refuses to load a database in which two objects
+share an id (`Duplicate descriptor GUID`). Merging each use on its own would let them drift apart, so before the main
+merge each non-exported descriptor's content is merged once. The result is written back into vanilla and every mod, which
+leaves the main merge to decide only which lists contain it. Every descriptor is then compiled as one shared object.
+Exports are identified by path, so two exports can still claim the same id, for example when two mods clone a unit
+without giving it a new GUID. Both are kept: the export holding vanilla's id (or else the first) keeps it, and each other
+export gets a new id hashed from its path and old id, which is reported in the merge's conflict list.
+
 Exports added by mods are inserted after their nearest preceding export, preserving each mod's own ordering. If a mod
 deleted an export that merged content still references, the export is restored and reported, so the output never
 contains a dangling reference.

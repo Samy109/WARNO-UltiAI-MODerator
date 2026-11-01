@@ -1,3 +1,6 @@
+using System.Security.Cryptography;
+using System.Text;
+
 namespace WarnoModerator.Core.Ndf;
 
 public sealed record NdfVariant(string ModName, NdfDatabase Database);
@@ -15,7 +18,8 @@ public sealed record NdfMergeResult(NdfDatabase Database, IReadOnlyList<NdfConfl
 /// </summary>
 public sealed class NdfMerger
 {
-    private static readonly string[] IdentityFields = ["_ShortDatabaseName", "Name", "DescriptorId"];
+    private const string DescriptorIdField = "DescriptorId";
+    private static readonly string[] IdentityFields = ["_ShortDatabaseName", "Name", DescriptorIdField];
     private readonly List<NdfConflict> _conflicts = [];
     private readonly HashSet<string> _changedBy = [];
     private int _changedObjects;
@@ -28,6 +32,7 @@ public sealed class NdfMerger
     {
         if (variants.Count == 0) throw new ArgumentException("Nothing to merge.", nameof(variants));
         var merger = new NdfMerger();
+        (vanilla, variants) = merger.UnifyDescriptors(vanilla, variants, token);
         var merged = vanilla is null ? merger.MergeWithoutBase(variants, token) : merger.MergeTopLevel(vanilla, variants, token);
         var owners = new Dictionary<(string, string), string>();
         var shared = new HashSet<NdfObject>();
@@ -37,8 +42,150 @@ public sealed class NdfMerger
             shared.UnionWith(db.SharedObjects);
         }
         merged = merger.RestoreMissingExports(merged, vanilla, variants);
+        merged = merger.SettleDescriptors(merged, vanilla, variants, shared);
         return new NdfMergeResult(new NdfDatabase(merged, shared, owners), merger._conflicts,
             variants.Select(v => v.ModName).Where(merger._changedBy.Contains).ToArray(), merger._changedObjects);
+    }
+
+    /// <summary>
+    /// A DescriptorId names one object however many parents reference it, and WARNO refuses to load two objects
+    /// with the same id. Merging each use separately lets them diverge, so the content of every non-exported
+    /// descriptor is merged once here and written back into vanilla and each variant. The merge that follows then
+    /// only decides where each descriptor is used.
+    /// </summary>
+    private (NdfDatabase? Vanilla, IReadOnlyList<NdfVariant> Variants) UnifyDescriptors(NdfDatabase? vanilla,
+        IReadOnlyList<NdfVariant> variants, CancellationToken token)
+    {
+        // Slot 0 is vanilla; slot i + 1 is variants[i].
+        var versions = new Dictionary<NdfValue, NdfObject?[]>();
+        var databases = variants.Select(v => v.Database).Prepend(vanilla).ToArray();
+        for (var i = 0; i < databases.Length; i++)
+        {
+            if (databases[i] is not { } database) continue;
+            foreach (var nested in NestedObjects(database.TopLevel))
+            {
+                if (DescriptorId(nested) is not { } id) continue;
+                if (!versions.TryGetValue(id, out var slots)) versions[id] = slots = new NdfObject?[databases.Length];
+                slots[i] ??= nested;
+            }
+        }
+        if (versions.Values.All(slots => slots.OfType<NdfObject>().Distinct().Count() == 1)) return (vanilla, variants);
+
+        var descriptors = new Dictionary<NdfValue, NdfObject>();
+        var unified = new Dictionary<NdfObject, NdfObject>();
+
+        NdfObject Unify(NdfObject value)
+        {
+            if (unified.TryGetValue(value, out var done)) return done;
+            return unified[value] = DescriptorId(value) is { } id ? MergeDescriptor(id) : UnifyFields(value);
+        }
+
+        NdfObject UnifyFields(NdfObject value) => new(value.ClassName,
+            value.Fields.Select(f => new KeyValuePair<string, NdfValue>(f.Key, UnifyValue(f.Value))).ToArray());
+
+        NdfValue UnifyValue(NdfValue value) => value switch
+        {
+            NdfObject o => Unify(o),
+            NdfList l => new NdfList(l.Items.Select(UnifyValue).ToArray()),
+            NdfMap m => new NdfMap(m.Entries.Select(e => new KeyValuePair<NdfValue, NdfValue>(UnifyValue(e.Key), UnifyValue(e.Value))).ToArray()),
+            NdfPair p => new NdfPair(UnifyValue(p.First), UnifyValue(p.Second)),
+            _ => value
+        };
+
+        NdfObject MergeDescriptor(NdfRaw id)
+        {
+            if (descriptors.TryGetValue(id, out var done)) return done;
+            var slots = versions[id].Select(v => v is null ? null : UnifyFields(v)).ToArray();
+            var baseValue = slots[0];
+            var path = $"{slots.OfType<NdfObject>().First().ClassName} {DescribeDescriptor(id)}";
+            var value = MergeValue(path, baseValue,
+                variants.Select((v, i) => (v.ModName, (NdfValue?)(slots[i + 1] ?? baseValue))).ToArray(), out var changed);
+            if (changed) _changedObjects++;
+            return descriptors[id] = (NdfObject)value!;
+        }
+
+        NdfDatabase UnifyDatabase(NdfDatabase database)
+        {
+            token.ThrowIfCancellationRequested();
+            return new NdfDatabase(
+                database.TopLevel.Select(t => new NdfTopLevel(t.ExportPath, t.ExportPath is null ? Unify(t.Value) : UnifyFields(t.Value))).ToArray(),
+                database.SharedObjects.Select(Unify).ToHashSet(), database.PropertyOwners);
+        }
+
+        return (vanilla is null ? null : UnifyDatabase(vanilla),
+            variants.Select(v => v with { Database = UnifyDatabase(v.Database) }).ToArray());
+    }
+
+    /// <summary>
+    /// Compiles every nested descriptor once and keeps every export. Nested descriptors are already unique, so the
+    /// only collisions left are exports, such as units two mods cloned with the same id. References to exports go
+    /// by path, so the export that keeps vanilla's id (or else comes first) stays and the others get a new id.
+    /// </summary>
+    private List<NdfTopLevel> SettleDescriptors(List<NdfTopLevel> merged, NdfDatabase? vanilla,
+        IReadOnlyList<NdfVariant> variants, HashSet<NdfObject> shared)
+    {
+        var claimed = new HashSet<NdfValue>();
+        foreach (var nested in NestedObjects(merged))
+        {
+            if (DescriptorId(nested) is not { } id) continue;
+            claimed.Add(id);
+            shared.Add(nested);
+        }
+        var vanillaIds = vanilla?.TopLevel.Where(t => t.ExportPath is not null && DescriptorId(t.Value) is not null)
+            .Select(t => (t.ExportPath!, (NdfValue)DescriptorId(t.Value)!)).ToHashSet() ?? [];
+        var exports = merged.Where(t => t.ExportPath is not null && DescriptorId(t.Value) is not null)
+            .OrderBy(t => vanillaIds.Contains((t.ExportPath!, DescriptorId(t.Value)!)) ? 0 : 1);
+        var reassigned = new Dictionary<string, NdfObject>(StringComparer.Ordinal);
+        foreach (var top in exports)
+        {
+            var id = DescriptorId(top.Value)!;
+            if (claimed.Add(id)) continue;
+            var path = top.ExportPath!;
+            var replacement = new NdfRaw(id.Type, SHA256.HashData(Encoding.UTF8.GetBytes($"{path}|{Convert.ToHexString(id.Data)}"))[..id.Data.Length]);
+            claimed.Add(replacement);
+            reassigned[path] = new NdfObject(top.Value.ClassName, top.Value.Fields
+                .Select(f => f.Key == DescriptorIdField ? new KeyValuePair<string, NdfValue>(f.Key, replacement) : f).ToArray());
+            var owner = variants.FirstOrDefault(v => v.Database.TopLevel.Any(t => t.ExportPath == path))?.ModName ?? "vanilla";
+            _conflicts.Add(new NdfConflict(ShortName(path), owner, [],
+                $"given the new descriptor {DescribeDescriptor(replacement)} because {DescribeDescriptor(id)} is already used"));
+        }
+        return merged.Select(t => t.ExportPath is { } path && reassigned.TryGetValue(path, out var value)
+            ? new NdfTopLevel(path, value) : t).ToList();
+    }
+
+    private static NdfRaw? DescriptorId(NdfObject value) => value.Get(DescriptorIdField) as NdfRaw;
+
+    private static string DescribeDescriptor(NdfRaw id)
+    {
+        var hex = Convert.ToHexString(id.Data);
+        return $"{{{hex[..8]}-{hex[8..12]}-{hex[12..16]}-{hex[16..20]}-{hex[20..]}}}";
+    }
+
+    /// <summary>Every distinct object below the exports, plus the anonymous top-level objects.</summary>
+    private static IEnumerable<NdfObject> NestedObjects(IReadOnlyList<NdfTopLevel> topLevel)
+    {
+        var visited = new HashSet<NdfValue>();
+        var stack = new Stack<NdfValue>();
+        foreach (var top in topLevel)
+        {
+            if (top.ExportPath is null) stack.Push(top.Value);
+            else foreach (var field in top.Value.Fields) stack.Push(field.Value);
+        }
+        while (stack.Count > 0)
+        {
+            var current = stack.Pop();
+            switch (current)
+            {
+                case NdfObject o:
+                    if (!visited.Add(o)) break;
+                    yield return o;
+                    foreach (var f in o.Fields) stack.Push(f.Value);
+                    break;
+                case NdfList l: foreach (var item in l.Items) stack.Push(item); break;
+                case NdfMap m: foreach (var e in m.Entries) { stack.Push(e.Key); stack.Push(e.Value); } break;
+                case NdfPair p: stack.Push(p.First); stack.Push(p.Second); break;
+            }
+        }
     }
 
     private List<NdfTopLevel> MergeTopLevel(NdfDatabase vanilla, IReadOnlyList<NdfVariant> variants, CancellationToken token)
@@ -59,7 +206,7 @@ public sealed class NdfMerger
             }
             var path = (string)key;
             var value = MergeValue(ShortName(path), baseByKey.GetValueOrDefault(key),
-                variants.Select((v, i) => (v.ModName, variantMaps[i].GetValueOrDefault(key))).ToArray(), out var changed);
+                variants.Select((v, i) => (v.ModName, variantMaps[i].GetValueOrDefault(key))).ToArray(), out var changed, exported: true);
             if (changed) _changedObjects++;
             if (value is NdfObject obj) result.Add(new NdfTopLevel(path, obj));
             else if (value is not null) throw new NdfFormatException($"Export {path} merged to a non-object value.");
@@ -98,7 +245,9 @@ public sealed class NdfMerger
     private static string ShortName(string path) => path[(path.LastIndexOf('/') + 1)..];
 
     /// <summary>Merges one value. Variants are (mod, value) pairs, highest priority first; null means absent.</summary>
-    private NdfValue? MergeValue(string path, NdfValue? baseValue, IReadOnlyList<(string Mod, NdfValue? Value)> variants, out bool changed)
+    /// <param name="exported">The value is an export, which its path identifies even if a mod changes its descriptor.</param>
+    private NdfValue? MergeValue(string path, NdfValue? baseValue, IReadOnlyList<(string Mod, NdfValue? Value)> variants,
+        out bool changed, bool exported = false)
     {
         var edits = variants.Where(v => !NdfValue.Same(v.Value, baseValue)).ToArray();
         changed = edits.Length > 0;
@@ -109,7 +258,9 @@ public sealed class NdfMerger
         var candidates = edits.Select(e => e.Value).Append(baseValue).OfType<NdfValue>().ToArray();
         if (edits.All(e => e.Value is not null))
         {
-            if (candidates.All(v => v is NdfObject o && o.ClassName == ((NdfObject)candidates[0]).ClassName))
+            // Two nested descriptors are different objects; a field-by-field blend would duplicate their ids.
+            if (candidates.All(v => v is NdfObject o && o.ClassName == ((NdfObject)candidates[0]).ClassName
+                    && (exported || NdfValue.Same(DescriptorId(o), DescriptorId((NdfObject)candidates[0])))))
                 return MergeObject(path, baseValue as NdfObject, variants);
             if (candidates.All(v => v is NdfList) && TryMergeList(path, baseValue as NdfList, variants, out var list))
                 return list;
