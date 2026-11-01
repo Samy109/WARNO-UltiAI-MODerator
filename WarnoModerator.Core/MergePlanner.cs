@@ -103,11 +103,15 @@ public sealed class MergePlanner(SourceDeltaAnalyzer deltaAnalyzer)
 
     /// <param name="inputs">Compiled payloads in priority order (primary first).</param>
     /// <param name="mergeDirectory">Where merged databases are written; null plans without writing (preview).</param>
+    /// <param name="generated">WARNO's own generation of the output, when no input already represents it. It takes
+    /// part with the lowest priority, so the output keeps the files every generated mod has under its own name.</param>
     internal static MergePreview CreateCompiledPlan(string outputName, IReadOnlyList<ModDescriptor> mods,
         IReadOnlyList<CompiledInput> inputs, VanillaDatabases vanilla, string? mergeDirectory, CancellationToken token,
-        bool provisional = false)
+        bool provisional = false, CompiledInput? generated = null)
     {
-        var files = inputs.Select(input => EnumerateRuntimeFiles(input.Root)
+        var contributors = generated is null ? inputs : [.. inputs, generated];
+        var files = contributors.Select(input => EnumerateRuntimeFiles(input.Root)
+            .Where(x => input != generated || IsOutputOwned(x.RelativePath, outputName))
             .ToDictionary(x => x.RelativePath, x => x.FullPath, StringComparer.OrdinalIgnoreCase)).ToArray();
         for (var i = 0; i < inputs.Count; i++)
             if (files[i].Count == 0 && !provisional)
@@ -117,12 +121,12 @@ public sealed class MergePlanner(SourceDeltaAnalyzer deltaAnalyzer)
         var decisions = new ConcurrentDictionary<string, MergeDecision>(StringComparer.OrdinalIgnoreCase);
         var conflicts = new ConcurrentDictionary<string, IReadOnlyList<MergeDecision>>(StringComparer.OrdinalIgnoreCase);
         var warnings = new ConcurrentBag<string>();
-        var payloadSizes = inputs.Select((input, i) => (input.Name, files[i].Count)).ToDictionary(x => x.Name, x => x.Count);
+        var payloadSizes = contributors.Select((input, i) => (input.Name, files[i].Count)).ToDictionary(x => x.Name, x => x.Count);
         var options = new ParallelOptions { CancellationToken = token, MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount / 2) };
         Parallel.ForEach(paths, options, path =>
         {
-            var providers = Enumerable.Range(0, inputs.Count).Where(i => files[i].ContainsKey(path))
-                .Select(i => (Input: inputs[i], File: files[i][path])).ToArray();
+            var providers = Enumerable.Range(0, contributors.Count).Where(i => files[i].ContainsKey(path))
+                .Select(i => (Input: contributors[i], File: files[i][path])).ToArray();
             decisions[path] = Decide(path, providers, payloadSizes, vanilla, mergeDirectory, conflicts, warnings, token);
         });
 
@@ -140,6 +144,14 @@ public sealed class MergePlanner(SourceDeltaAnalyzer deltaAnalyzer)
     }
 
     private static readonly string[] FileManifests = ["Gen\\DeclaredFiles.txt", "Gen\\UsedFiles.txt"];
+
+    // A generated mod's packs, dictionaries and their database entries sit under its name; the asset catalog and
+    // file lists register them, so those are merged with the inputs' rather than replaced.
+    private static bool IsOutputOwned(string path, string outputName) =>
+        FileManifests.Contains(path, StringComparer.OrdinalIgnoreCase)
+        || path.Equals("Gen\\ResourceFile\\Catalog.cat", StringComparison.OrdinalIgnoreCase)
+        || path.Split('\\').Any(segment => segment.Equals(outputName, StringComparison.OrdinalIgnoreCase)
+            || segment.Equals(outputName + ".ndfbin", StringComparison.OrdinalIgnoreCase));
 
     private static bool IsGeneratorByproduct(string path) =>
         path.StartsWith("Gen\\Intermediate\\", StringComparison.OrdinalIgnoreCase)

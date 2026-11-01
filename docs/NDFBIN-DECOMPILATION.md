@@ -194,6 +194,13 @@ Databases WARNO doesn't ship, such as `Catalog.cat`, merge **without a base**. E
 so each mod's asset registrations are unioned by asset path. For example, merging four mods' catalogs gives a single
 catalog that registers every mod's assets, with no conflicts.
 
+### The output's own generated files
+
+`GenerateMod.py` gives every mod files under its own name: `NDF/ResourcePacks/<Mod>.ndfbin`, `NDF/Localisation/<Mod>.ndfbin`,
+`MeshPack/<Mod>/`, `TextureProxy/<Mod>/` and `Localisation/Localisation/<Mod>/`. The asset catalog, `DeclaredFiles.txt` and
+`UsedFiles.txt` register them. WARNO's generation of the combined mod therefore takes part in the merge with the lowest
+priority: those files are kept next to the inputs' copies, and its catalog and file lists are merged with theirs.
+
 ## 9. Known limits
 
 * The tags `0x13`, `0x1D`, `0x1F`, `0x21` and `0x25` are copied verbatim. Their sizes are certain but their exact

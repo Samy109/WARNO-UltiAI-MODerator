@@ -7,6 +7,7 @@
 - **New decision badges**: `Delta Merged`, `Value Conflict`, `Priority Override`, `Single Mod` and `Identical`.
 - **Documentation**: The reverse-engineered `.ndfbin` and `edat` formats are described in `docs/NDFBIN-DECOMPILATION.md`.
 - **Fixed `Duplicate descriptor GUID` crash**: Mods that change the same skirmish pool elements could produce a combined mod that stopped WARNO from loading (`Can't load 'Glad:/NDF/GFX/Skirmish.ndfbin'`). Each descriptor is now merged once and compiled as a single object. Exports that two mods gave the same GUID are both kept, and the later one gets a new GUID. Rebuild any combined mod made with the earlier v2.0.0 download.
+- **Fixed missing generated files**: Combined mods lost the files WARNO generates under the output mod's own name (resource pack, localisation, mesh pack, texture proxy and dictionaries), along with their catalog and file-list entries. These are now kept next to every input mod's files. Rebuild existing combined mods to get them.
 
 Extract the entire Windows x64 ZIP before running the executable. Combined mods made with v1.x are still recognized; rebuild them to replace whole-database overrides with delta merging. Playtest merged combinations in-game.
 

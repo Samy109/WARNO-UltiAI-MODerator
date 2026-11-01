@@ -83,7 +83,11 @@ public sealed class CombineService(SourceDeltaAnalyzer deltaAnalyzer, IProcessRu
                 var mergeDirectory = Path.Combine(outputSource, ".combine-merged-" + Guid.NewGuid().ToString("N"));
                 try
                 {
-                    plan = MergePlanner.CreateCompiledPlan(request.OutputName, request.Mods, inputs, vanilla, mergeDirectory, token);
+                    // With editable input the output's generation is already an input.
+                    var generated = request.Mods.Any(m => m.Kind == ModKind.EditableSource) ? null
+                        : new CompiledInput(request.OutputName, outputRuntime, generatedConfig.GetSection("Config"));
+                    plan = MergePlanner.CreateCompiledPlan(request.OutputName, request.Mods, inputs, vanilla, mergeDirectory, token,
+                        generated: generated);
                     foreach (var warning in plan.Warnings) Log("  [NOTE] " + warning);
                     ComposeCompiledPayload(request, plan, inputs, generatedConfig, outputSource, outputRuntime, Log, Report, token);
                 }
@@ -246,8 +250,8 @@ public sealed class CombineService(SourceDeltaAnalyzer deltaAnalyzer, IProcessRu
             var fingerprint = providers.Select(i => i.ConfigKeys.GetValueOrDefault(key)).FirstOrDefault(f => !string.IsNullOrWhiteSpace(f));
             if (fingerprint is null)
             {
-                // WARNO never fingerprints per-mod-name databases (Localisation/<Mod>, ResourcePacks/<Mod>); the
-                // output gets its own from runtime generation, so an input's copy is inert rather than unverifiable.
+                // WARNO never fingerprints per-mod-name databases (Localisation/<Mod>, ResourcePacks/<Mod>), so the
+                // inputs' copies and the output's own have no manifest entry to carry over.
                 if (IsInputNamedDatabase(key)) continue;
                 throw new CombineException($"{decision.Winner}'s selected database {decision.RelativePath} has no matching manifest fingerprint ({key}). Refresh or regenerate that input.");
             }
@@ -268,7 +272,7 @@ public sealed class CombineService(SourceDeltaAnalyzer deltaAnalyzer, IProcessRu
         if (!folder.Equals("Localisation", StringComparison.OrdinalIgnoreCase)
             && !folder.Equals("ResourcePacks", StringComparison.OrdinalIgnoreCase)) return false;
         // Mods ship extra per-mod databases such as Localisation/<Mod>_test, so any database in these folders
-        // is treated as inert when unfingerprinted; the output regenerates its own at runtime.
+        // is accepted when unfingerprinted.
         return true;
     }
 
