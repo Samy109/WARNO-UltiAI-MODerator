@@ -1,3 +1,12 @@
+# WARNO UltiAI MODerator v2.0.1
+
+- **Fixed "WARNO's CreateNewMod.py tools are missing" after the latest WARNO update**: WARNO no longer ships its own copy of Python with the mod tools, so the app couldn't run them. It now finds the Python 3 installed on your PC by checking the `py` launcher, PATH and the standard python.org install folders. It skips the Microsoft Store `python3` shortcut, which only opens the Store. Older WARNO builds that still include their own Python keep using it.
+- **Python 3 is now required**: If the app can't find Python, it asks you to install Python 3 from [python.org](https://www.python.org/downloads/). Tick **Add python.exe to PATH** during setup. WARNO's own `.bat` mod tools need this too since the update. This check runs before anything is created or moved, so existing combined mods are left untouched.
+
+Extract the entire Windows x64 ZIP before running the executable. This release doesn't change how mods are combined. After a WARNO update, rebuild your combined mods as usual once the Workshop mods have updated.
+
+---
+
 # WARNO UltiAI MODerator v2.0.0
 
 - **Combine any mods, not just UltiAI pairs**: Add as many installed Workshop or editable mods as you like. UltiAI is listed first and added as the primary mod by default, but it is no longer required.

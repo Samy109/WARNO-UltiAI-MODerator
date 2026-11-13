@@ -25,6 +25,10 @@ public sealed class CombineService(SourceDeltaAnalyzer deltaAnalyzer, IProcessRu
             if (request.Mods.Any(m => MergePlanner.SamePath(output, m.RootPath)))
                 throw new CombineException("The output must not replace an input mod.");
         VerifyModDirectoryWritable(request.Paths.ModsRoot);
+        // Resolve the SDK toolchain before anything is moved, so a missing Python never needs a rollback.
+        foreach (var script in new[] { "CreateNewMod.py", "GenerateMod.py" })
+            if (!File.Exists(SdkScript(request, script))) throw new CombineException($"WARNO's {script} tool is missing. Verify the game files in Steam.");
+        var python = PythonLocator.Find(request.Paths.ModsRoot, Log);
         using var operationLock = BuildRecovery.AcquireLock(request.Paths, request.OutputName);
         var exists = Directory.Exists(outputSource) || Directory.Exists(outputRuntime);
         if (rebuild && !exists) throw new CombineException("The existing combined mod is missing. Refresh mods.");
@@ -52,7 +56,7 @@ public sealed class CombineService(SourceDeltaAnalyzer deltaAnalyzer, IProcessRu
                 Log($"  Safeguarded existing '{request.OutputName}' folders to recovery backup.");
             Report(5, "Creating local mod");
             Log($"[STEP 3/7] Running WARNO SDK CreateNewMod.py to initialize '{request.OutputName}'...");
-            await RunSdkAsync(request, "CreateNewMod.py", [request.OutputName], request.Paths.ModsRoot, Log, token).ConfigureAwait(false);
+            await RunSdkAsync(python, request, "CreateNewMod.py", [request.OutputName], request.Paths.ModsRoot, Log, token).ConfigureAwait(false);
             if (!Directory.Exists(outputSource)) throw new CombineException("WARNO did not create the output directory.");
             if (sourcePlan.Count > 0)
             {
@@ -68,7 +72,7 @@ public sealed class CombineService(SourceDeltaAnalyzer deltaAnalyzer, IProcessRu
             }
             Report(10, "Generating with WARNO");
             Log($"[STEP 4/7] Running WARNO SDK GenerateMod.py to build local mod identity and Config.ini baseline...");
-            await RunSdkAsync(request, "GenerateMod.py", ["WARNO", request.OutputName], outputSource, Log, token).ConfigureAwait(false);
+            await RunSdkAsync(python, request, "GenerateMod.py", ["WARNO", request.OutputName], outputSource, Log, token).ConfigureAwait(false);
             var generatedConfig = LoadGeneratedConfig(request, outputRuntime, Log);
             MergePreview plan;
             if (request.Mods.Any(m => m.Kind == ModKind.WorkshopCompiled))
@@ -144,14 +148,14 @@ public sealed class CombineService(SourceDeltaAnalyzer deltaAnalyzer, IProcessRu
         return result;
     }
 
-    private async Task RunSdkAsync(CombineRequest request, string scriptName, IEnumerable<string> arguments,
+    private static string SdkScript(CombineRequest request, string scriptName) =>
+        Path.Combine(request.Paths.ModsRoot, "Utils", "Scripts", scriptName);
+
+    private async Task RunSdkAsync(string python, CombineRequest request, string scriptName, IEnumerable<string> arguments,
         string workingDirectory, Action<string> log, CancellationToken token)
     {
-        var python = Path.Combine(request.Paths.ModsRoot, "Utils", "Python", "python.exe");
-        var script = Path.Combine(request.Paths.ModsRoot, "Utils", "Scripts", scriptName);
-        if (!File.Exists(python) || !File.Exists(script)) throw new CombineException($"WARNO's {scriptName} tools are missing.");
         token.ThrowIfCancellationRequested();
-        var exitCode = await processRunner.RunAsync(python, new[] { script }.Concat(arguments), workingDirectory, log, token).ConfigureAwait(false);
+        var exitCode = await processRunner.RunAsync(python, new[] { SdkScript(request, scriptName) }.Concat(arguments), workingDirectory, log, token).ConfigureAwait(false);
         if (exitCode != 0) throw new CombineException($"WARNO {scriptName} failed with exit code {exitCode}.");
     }
 

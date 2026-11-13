@@ -9,10 +9,10 @@
     <AssemblyName>WARNO-UltiAI-MODerator</AssemblyName>
     <RootNamespace>WarnoModerator.App</RootNamespace>
     <Product>WARNO UltiAI MODerator</Product>
-    <Version>2.0.0</Version>
-    <AssemblyVersion>2.0.0.0</AssemblyVersion>
-    <FileVersion>2.0.0.0</FileVersion>
-    <InformationalVersion>2.0.0</InformationalVersion>
+    <Version>2.0.1</Version>
+    <AssemblyVersion>2.0.1.0</AssemblyVersion>
+    <FileVersion>2.0.1.0</FileVersion>
+    <InformationalVersion>2.0.1</InformationalVersion>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <Description>Combine any editable or Steam Workshop WARNO mods by delta merging their compiled databases.</Description>
     <RepositoryUrl>https://github.com/Samy109/WARNO-UltiAI-MODerator</RepositoryUrl>
