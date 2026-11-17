@@ -175,31 +175,20 @@ public sealed class MergePlanner(SourceDeltaAnalyzer deltaAnalyzer)
             $"Atomic file: {primary.Name} has priority over {others}.", primaryFile, Overlap: true);
         if (FileManifests.Contains(path, StringComparer.OrdinalIgnoreCase))
             return MergeManifest(path, providers, mergeDirectory);
-        // A mod that ships vanilla's own copy has not changed the file; it must neither win nor conflict.
-        var changed = ChangedFromVanilla(path, providers, vanilla, token);
-        if (changed.Length == 1 && changed.Length < providers.Length && !IsNdfBinary(changed[0].File))
-            return new MergeDecision(path, MergeDecisionKind.Single, changed[0].Input.Name,
-                $"Only {changed[0].Input.Name} changes this file from vanilla; the others ship it unchanged.", changed[0].File, Overlap: true);
         if (IsGeneratorByproduct(path))
         {
-            // Build caches and reports describe a mod's own asset generation; keep them with the largest payload
-            // among the mods that actually changed the file.
-            var largest = changed.MaxBy(p => payloadSizes[p.Input.Name]);
+            // Build caches and reports describe a mod's own asset generation; keep them with the largest payload.
+            var largest = providers.MaxBy(p => payloadSizes[p.Input.Name]);
             return new MergeDecision(path, MergeDecisionKind.Override, largest.Input.Name,
                 $"Generator output taken from {largest.Input.Name}, the mod with the largest compiled payload.", largest.File, Overlap: true);
         }
-        if (!IsNdfBinary(primaryFile))
-        {
-            var winner = changed[0];
-            return new MergeDecision(path, MergeDecisionKind.Override, winner.Input.Name,
-                $"Atomic file: {winner.Input.Name} has priority over {string.Join(", ", changed.Skip(1).Select(p => p.Input.Name))}.",
-                winner.File, Overlap: true);
-        }
+        if (!IsNdfBinary(primaryFile)) return overrideDecision;
 
+        var baseBytes = vanilla.TryRead(path);
+        NdfDatabase? baseDb = null;
         try
         {
-            var baseBytes = vanilla.TryRead(path);
-            var baseDb = baseBytes is null ? null : NdfDatabase.Load(baseBytes);
+            baseDb = baseBytes is null ? null : NdfDatabase.Load(baseBytes);
             if (baseDb is null && !path.EndsWith("Catalog.cat", StringComparison.OrdinalIgnoreCase))
             {
                 warnings.Add($"{path} has no vanilla counterpart; {primary.Name}'s copy is used over {others}.");
@@ -234,21 +223,40 @@ public sealed class MergePlanner(SourceDeltaAnalyzer deltaAnalyzer)
         }
         catch (NdfFormatException ex)
         {
-            warnings.Add($"{path} could not be delta merged ({ex.Message}); {primary.Name}'s copy is used over {others}.");
-            return overrideDecision;
+            // Whole-file fallback: a mod that ships vanilla's copy has changed nothing, so it must not outrank a mod that did.
+            var changed = ChangedFromVanilla(providers, baseBytes, baseDb);
+            var winner = changed[0];
+            warnings.Add($"{path} could not be delta merged ({ex.Message}); {winner.Input.Name}'s copy is used"
+                + (changed.Length < providers.Length ? ", the others ship vanilla's copy." : $" over {others}."));
+            return changed.Length == 1 && providers.Length > 1
+                ? new MergeDecision(path, MergeDecisionKind.Single, winner.Input.Name,
+                    $"Only {winner.Input.Name} changes this database; the others ship it unchanged from vanilla.", winner.File, Overlap: true)
+                : new MergeDecision(path, MergeDecisionKind.Override, winner.Input.Name,
+                    $"Atomic file: {winner.Input.Name} has priority over {string.Join(", ", changed.Skip(1).Select(p => p.Input.Name))}.", winner.File, Overlap: true);
         }
     }
 
-    /// <summary>Providers whose copy differs from vanilla's, in priority order; all of them when vanilla has no copy or none differ.</summary>
-    private static (CompiledInput Input, string File)[] ChangedFromVanilla(string path, (CompiledInput Input, string File)[] providers,
-        VanillaDatabases vanilla, CancellationToken token)
+    /// <summary>Providers whose database differs from vanilla's, in priority order; all of them when vanilla is unknown or none differ.</summary>
+    private static (CompiledInput Input, string File)[] ChangedFromVanilla((CompiledInput Input, string File)[] providers,
+        byte[]? baseBytes, NdfDatabase? baseDb)
     {
-        var baseline = vanilla.TryRead(path);
-        if (baseline is null) return providers;
-        var baselineHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(baseline));
-        var changed = providers.Where(p => new FileInfo(p.File).Length != baseline.Length
-            || SourceDeltaAnalyzer.ComputeSha256(p.File, token) != baselineHash).ToArray();
+        if (baseBytes is null) return providers;
+        var changed = providers.Where(p => !IsUnchanged(p.File, baseBytes, baseDb)).ToArray();
         return changed.Length == 0 ? providers : changed;
+    }
+
+    private static bool IsUnchanged(string file, byte[] baseBytes, NdfDatabase? baseDb)
+    {
+        var bytes = File.ReadAllBytes(file);
+        if (bytes.AsSpan().SequenceEqual(baseBytes)) return true;
+        if (baseDb is null) return false;
+        try
+        {
+            var db = NdfDatabase.Load(bytes);
+            return db.TopLevel.Count == baseDb.TopLevel.Count && db.TopLevel.Zip(baseDb.TopLevel)
+                .All(t => t.First.ExportPath == t.Second.ExportPath && NdfValue.Same(t.First.Value, t.Second.Value));
+        }
+        catch (NdfFormatException) { return false; }
     }
 
     /// <summary>Generated file lists (DeclaredFiles.txt, UsedFiles.txt) become the union of every mod's lines.</summary>

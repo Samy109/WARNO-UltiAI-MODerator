@@ -1,6 +1,6 @@
 ﻿# WARNO UltiAI MODerator v2.0.2
 
-- **Fixed false conflicts and lost changes when UltiAI is not the primary mod**: Files that are not delta-merged databases (generator output, atomic files) were decided by priority or payload size without checking what each mod actually changed. A mod that only shipped WARNO's vanilla copy of a file could be reported as a conflict, or could win and replace another mod's real change with vanilla. The app now compares each mod's copy with vanilla's and ignores mods that left the file unchanged, so the mod that changed it is kept and no conflict is reported.
+- **Fixed a mod that changed nothing overriding the mods that did**: When a database could not be delta merged, the app fell back to taking the primary mod's whole file. If the primary mod (for example UltiAI) shipped vanilla's unchanged copy and a lower-priority mod had changed it, the change was lost and the file was reported as a conflict. The app now compares each mod's copy with vanilla's and ignores mods that left the file unchanged. If a database still can't be delta merged, the build log shows a [NOTE] line naming the file and the reason.
 
 Extract the entire Windows x64 ZIP before running the executable. Rebuild any combined mod made with an earlier version to pick up the fix.
 
