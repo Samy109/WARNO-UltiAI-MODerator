@@ -175,14 +175,26 @@ public sealed class MergePlanner(SourceDeltaAnalyzer deltaAnalyzer)
             $"Atomic file: {primary.Name} has priority over {others}.", primaryFile, Overlap: true);
         if (FileManifests.Contains(path, StringComparer.OrdinalIgnoreCase))
             return MergeManifest(path, providers, mergeDirectory);
+        // A mod that ships vanilla's own copy has not changed the file; it must neither win nor conflict.
+        var changed = ChangedFromVanilla(path, providers, vanilla, token);
+        if (changed.Length == 1 && changed.Length < providers.Length && !IsNdfBinary(changed[0].File))
+            return new MergeDecision(path, MergeDecisionKind.Single, changed[0].Input.Name,
+                $"Only {changed[0].Input.Name} changes this file from vanilla; the others ship it unchanged.", changed[0].File, Overlap: true);
         if (IsGeneratorByproduct(path))
         {
-            // Build caches and reports describe a mod's own asset generation; keep them with the largest payload.
-            var largest = providers.MaxBy(p => payloadSizes[p.Input.Name]);
+            // Build caches and reports describe a mod's own asset generation; keep them with the largest payload
+            // among the mods that actually changed the file.
+            var largest = changed.MaxBy(p => payloadSizes[p.Input.Name]);
             return new MergeDecision(path, MergeDecisionKind.Override, largest.Input.Name,
                 $"Generator output taken from {largest.Input.Name}, the mod with the largest compiled payload.", largest.File, Overlap: true);
         }
-        if (!IsNdfBinary(primaryFile)) return overrideDecision;
+        if (!IsNdfBinary(primaryFile))
+        {
+            var winner = changed[0];
+            return new MergeDecision(path, MergeDecisionKind.Override, winner.Input.Name,
+                $"Atomic file: {winner.Input.Name} has priority over {string.Join(", ", changed.Skip(1).Select(p => p.Input.Name))}.",
+                winner.File, Overlap: true);
+        }
 
         try
         {
@@ -225,6 +237,18 @@ public sealed class MergePlanner(SourceDeltaAnalyzer deltaAnalyzer)
             warnings.Add($"{path} could not be delta merged ({ex.Message}); {primary.Name}'s copy is used over {others}.");
             return overrideDecision;
         }
+    }
+
+    /// <summary>Providers whose copy differs from vanilla's, in priority order; all of them when vanilla has no copy or none differ.</summary>
+    private static (CompiledInput Input, string File)[] ChangedFromVanilla(string path, (CompiledInput Input, string File)[] providers,
+        VanillaDatabases vanilla, CancellationToken token)
+    {
+        var baseline = vanilla.TryRead(path);
+        if (baseline is null) return providers;
+        var baselineHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(baseline));
+        var changed = providers.Where(p => new FileInfo(p.File).Length != baseline.Length
+            || SourceDeltaAnalyzer.ComputeSha256(p.File, token) != baselineHash).ToArray();
+        return changed.Length == 0 ? providers : changed;
     }
 
     /// <summary>Generated file lists (DeclaredFiles.txt, UsedFiles.txt) become the union of every mod's lines.</summary>

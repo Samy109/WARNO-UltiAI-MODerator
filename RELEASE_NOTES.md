@@ -1,3 +1,11 @@
+﻿# WARNO UltiAI MODerator v2.0.2
+
+- **Fixed false conflicts and lost changes when UltiAI is not the primary mod**: Files that are not delta-merged databases (generator output, atomic files) were decided by priority or payload size without checking what each mod actually changed. A mod that only shipped WARNO's vanilla copy of a file could be reported as a conflict, or could win and replace another mod's real change with vanilla. The app now compares each mod's copy with vanilla's and ignores mods that left the file unchanged, so the mod that changed it is kept and no conflict is reported.
+
+Extract the entire Windows x64 ZIP before running the executable. Rebuild any combined mod made with an earlier version to pick up the fix.
+
+---
+
 # WARNO UltiAI MODerator v2.0.1
 
 - **Fixed "WARNO's CreateNewMod.py tools are missing" after the latest WARNO update**: WARNO no longer ships its own copy of Python with the mod tools, so the app couldn't run them. It now finds the Python 3 installed on your PC by checking the `py` launcher, PATH and the standard python.org install folders. It skips the Microsoft Store `python3` shortcut, which only opens the Store. Older WARNO builds that still include their own Python keep using it.
@@ -27,7 +35,7 @@ Extract the entire Windows x64 ZIP before running the executable. Combined mods 
 - **Auto-Detect Existing Merges & Live Preview**: Automatically selects your existing combined mod pair at startup, excludes combined outputs from being scanned as editable input mods, and displays the merge preview immediately when switching mods.
 - **Parallel Source & Output Verification**: Hashes source mods and combined runtime outputs concurrently with unified progress reporting so large multi-GB Workshop mods (such as Honor Or Death) never stall at 100% while verifying the runtime folder.
 - **Clearer Terminology & Decision Badges**: Standardized `Base mod` / `Priority mod (UltiAI)` labels, added a color-coded **Decision** column (`UltiAI Override`, `UltiAI Added`, `Base UI Kept`, `Base Mod Kept`, `Identical`), and updated precedence reasons to name the winning and overridden mods directly.
-- **Step-by-Step Build Diagnostics**: Added structured `[STEP 1/7]`–`[STEP 7/7]` build logging, SHA-256 baseline/verification summaries, `[SDK]` script output tags, and disabled-button explanation tooltips while keeping the spacious layout.
+- **Step-by-Step Build Diagnostics**: Added structured `[STEP 1/7]`â€“`[STEP 7/7]` build logging, SHA-256 baseline/verification summaries, `[SDK]` script output tags, and disabled-button explanation tooltips while keeping the spacious layout.
 
 Extract the entire Windows x64 ZIP before running the executable. No rebuild is needed for combinations created with v1.4.0 or v1.4.1.
 
@@ -75,7 +83,7 @@ Extract the entire Windows ZIP before running the app.
 - Keep UltiAI precedence for remaining compiled databases; use UltiAI UI components when the other mod has none.
 - Align merge previews, output verification, and compatibility entries with the selected UI components.
 - Rebuild existing combinations after installing this replacement v1.2.0 ZIP. End-game labels may use the other mod's defaults; additional roles such as Siege still need an end-game playtest.
-- Rebuild existing combinations even when no source updates are detected—no manual deletion needed.
+- Rebuild existing combinations even when no source updates are detectedâ€”no manual deletion needed.
 - See clear status messages for source updates, missing or changed output, and failed checks.
 - Detect changed WARNO build data and offer a rebuild.
 - Recheck inputs during merging and restore the previous combination if a rebuild fails, including final verification or saving its update record.
