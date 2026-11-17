@@ -153,13 +153,27 @@ public sealed class VanillaDatabases
     private readonly EdatArchive? _archive;
     public string? ArchivePath { get; }
 
-    private VanillaDatabases(EdatArchive? archive, string? path) { _archive = archive; ArchivePath = path; }
+    private VanillaDatabases(EdatArchive? archive, string? path, string? searched = null)
+    { _archive = archive; ArchivePath = path; Searched = searched; }
+
+    /// <summary>Where the archive was looked for and what was found there, for diagnostics when it is missing.</summary>
+    public string? Searched { get; }
 
     public static VanillaDatabases Open(string warnoRoot, int? modGenVersion)
     {
-        if (modGenVersion is not int version) return new(null, null);
-        var path = Path.Combine(warnoRoot, "Data", "PC", version.ToString(), "Glad.dat");
-        return File.Exists(path) ? new(new EdatArchive(path), path) : new(null, null);
+        if (modGenVersion is not int version) return new(null, null, "no ModGenVersion to look up");
+        var pcRoot = Path.Combine(warnoRoot, "Data", "PC");
+        var path = Path.Combine(pcRoot, version.ToString(), "Glad.dat");
+        if (File.Exists(path)) return new(new EdatArchive(path), path);
+        // Newer WARNO builds may keep the archive elsewhere under Data\PC; a single Glad.dat there is the installed build's.
+        string[] found = [];
+        try { found = Directory.Exists(pcRoot) ? Directory.GetFiles(pcRoot, "Glad.dat", SearchOption.AllDirectories) : []; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        if (found.Length == 1) return new(new EdatArchive(found[0]), found[0]);
+        var listing = Directory.Exists(pcRoot)
+            ? string.Join(", ", Directory.EnumerateFileSystemEntries(pcRoot).Take(12).Select(Path.GetFileName))
+            : "folder does not exist";
+        return new(null, null, $"expected {path}; {found.Length} Glad.dat file(s) under {pcRoot}; contents: {listing}");
     }
 
     public bool Available => _archive is not null;

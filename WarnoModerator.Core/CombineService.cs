@@ -81,7 +81,7 @@ public sealed class CombineService(SourceDeltaAnalyzer deltaAnalyzer, IProcessRu
                 var vanilla = VanillaDatabases.Open(request.Paths.WarnoRoot, generatedConfig.GetInt("Properties", "ModGenVersion", -1));
                 Log(vanilla.Available
                     ? $"  Using vanilla databases from {vanilla.ArchivePath} as the delta baseline."
-                    : "  [WARN] Vanilla databases (Glad.dat) not found; overlapping databases fall back to whole-file priority.");
+                    : $"  [WARN] Vanilla databases (Glad.dat) not found ({vanilla.Searched}); overlapping databases fall back to whole-file priority.");
                 Report(20, "Delta merging databases");
                 Log($"  Planning and delta merging compiled databases: {string.Join(" > ", inputs.Select(x => x.Name))}...");
                 var mergeDirectory = Path.Combine(outputSource, ".combine-merged-" + Guid.NewGuid().ToString("N"));

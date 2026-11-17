@@ -135,7 +135,7 @@ public sealed class MergePlanner(SourceDeltaAnalyzer deltaAnalyzer)
         var notes = new List<string>();
         if (provisional) notes.Add("Provisional preview: editable SDK input will be compiled by WARNO during the build; the final report will reflect the exact compiled files.");
         if (!vanilla.Available)
-            notes.Add("WARNO's vanilla databases (Data\\PC\\<ModGen>\\Glad.dat) were not found, so overlapping databases fall back to whole-file priority.");
+            notes.Add($"WARNO's vanilla databases (Glad.dat) were not found ({vanilla.Searched}), so overlapping databases fall back to whole-file priority.");
         var merged = ordered.Count(d => d.Kind == MergeDecisionKind.Merged && !d.RelativePath.EndsWith(".txt", StringComparison.OrdinalIgnoreCase));
         if (merged > 0)
             notes.Add($"{merged:N0} database(s) were changed by several mods and are delta merged against vanilla; {valueConflicts.Length:N0} value conflict(s) resolved by priority ({string.Join(" > ", inputs.Select(i => i.Name))}).");

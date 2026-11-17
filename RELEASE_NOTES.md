@@ -1,6 +1,7 @@
 ﻿# WARNO UltiAI MODerator v2.0.2
 
 - **Fixed a mod that changed nothing overriding the mods that did**: Source files under `GameData` (such as `GameData\Generated\Gameplay\TacticalUnits.ndf`) were taken whole from the primary mod. When the primary mod (for example UltiAI) shipped vanilla's unchanged copy and a lower-priority mod had changed it, the change was lost and the file was reported as a priority override. The app now compares each mod's copy with WARNO's own `ModData\base.zip` and ignores mods that left the file unchanged, so the mod that really changed it is kept. A database that can't be delta merged gets the same treatment. Rebuild your combined mods to pick this up.
+- **Finds WARNO's vanilla databases more reliably**: If `Glad.dat` isn't in `Data\PC\<ModGenVersion>`, the app now uses the only `Glad.dat` under `Data\PC`. If it still can't find one, the log and preview note say where it looked and what is in that folder, so databases changed by several mods aren't silently decided by whole-file priority without explanation.
 
 Extract the entire Windows x64 ZIP before running the executable. Rebuild any combined mod made with an earlier version to pick up the fix.
 
