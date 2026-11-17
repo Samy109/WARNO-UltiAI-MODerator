@@ -91,7 +91,7 @@ public sealed class CombineService(SourceDeltaAnalyzer deltaAnalyzer, IProcessRu
                     var generated = request.Mods.Any(m => m.Kind == ModKind.EditableSource) ? null
                         : new CompiledInput(request.OutputName, outputRuntime, generatedConfig.GetSection("Config"));
                     plan = MergePlanner.CreateCompiledPlan(request.OutputName, request.Mods, inputs, vanilla, mergeDirectory, token,
-                        generated: generated);
+                        generated: generated, sourceBaseline: SourceBaseline.TryOpen(request.Paths.ModDataBaseZip));
                     foreach (var warning in plan.Warnings) Log("  [NOTE] " + warning);
                     ComposeCompiledPayload(request, plan, inputs, generatedConfig, outputSource, outputRuntime, Log, Report, token);
                 }

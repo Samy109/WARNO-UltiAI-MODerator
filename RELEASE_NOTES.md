@@ -1,6 +1,6 @@
 ﻿# WARNO UltiAI MODerator v2.0.2
 
-- **Fixed a mod that changed nothing overriding the mods that did**: When a database could not be delta merged, the app fell back to taking the primary mod's whole file. If the primary mod (for example UltiAI) shipped vanilla's unchanged copy and a lower-priority mod had changed it, the change was lost and the file was reported as a conflict. The app now compares each mod's copy with vanilla's and ignores mods that left the file unchanged. If a database still can't be delta merged, the build log shows a [NOTE] line naming the file and the reason.
+- **Fixed a mod that changed nothing overriding the mods that did**: Source files under `GameData` (such as `GameData\Generated\Gameplay\TacticalUnits.ndf`) were taken whole from the primary mod. When the primary mod (for example UltiAI) shipped vanilla's unchanged copy and a lower-priority mod had changed it, the change was lost and the file was reported as a priority override. The app now compares each mod's copy with WARNO's own `ModData\base.zip` and ignores mods that left the file unchanged, so the mod that really changed it is kept. A database that can't be delta merged gets the same treatment. Rebuild your combined mods to pick this up.
 
 Extract the entire Windows x64 ZIP before running the executable. Rebuild any combined mod made with an earlier version to pick up the fix.
 

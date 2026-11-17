@@ -36,7 +36,7 @@ public sealed class MergePlanner(SourceDeltaAnalyzer deltaAnalyzer)
             m.Kind == ModKind.WorkshopCompiled ? m.RootPath : Path.Combine(paths.SavedModsRoot, m.Name), m.ConfigKeys)).ToArray();
         var vanilla = VanillaDatabases.Open(paths.WarnoRoot, CompiledModGen(mods));
         return CreateCompiledPlan(outputName, mods, inputs, vanilla, null, cancellationToken,
-            mods.Any(m => m.Kind == ModKind.EditableSource));
+            mods.Any(m => m.Kind == ModKind.EditableSource), sourceBaseline: SourceBaseline.TryOpen(paths.ModDataBaseZip));
     }
 
     internal static int? CompiledModGen(IEnumerable<ModDescriptor> mods) =>
@@ -107,7 +107,7 @@ public sealed class MergePlanner(SourceDeltaAnalyzer deltaAnalyzer)
     /// part with the lowest priority, so the output keeps the files every generated mod has under its own name.</param>
     internal static MergePreview CreateCompiledPlan(string outputName, IReadOnlyList<ModDescriptor> mods,
         IReadOnlyList<CompiledInput> inputs, VanillaDatabases vanilla, string? mergeDirectory, CancellationToken token,
-        bool provisional = false, CompiledInput? generated = null)
+        bool provisional = false, CompiledInput? generated = null, SourceBaseline? sourceBaseline = null)
     {
         var contributors = generated is null ? inputs : [.. inputs, generated];
         var files = contributors.Select(input => EnumerateRuntimeFiles(input.Root)
@@ -127,7 +127,7 @@ public sealed class MergePlanner(SourceDeltaAnalyzer deltaAnalyzer)
         {
             var providers = Enumerable.Range(0, contributors.Count).Where(i => files[i].ContainsKey(path))
                 .Select(i => (Input: contributors[i], File: files[i][path])).ToArray();
-            decisions[path] = Decide(path, providers, payloadSizes, vanilla, mergeDirectory, conflicts, warnings, token);
+            decisions[path] = Decide(path, providers, payloadSizes, vanilla, sourceBaseline, mergeDirectory, conflicts, warnings, token);
         });
 
         var ordered = paths.Select(p => decisions[p]).ToArray();
@@ -159,7 +159,7 @@ public sealed class MergePlanner(SourceDeltaAnalyzer deltaAnalyzer)
         || path.Equals("Gen\\DecorSetAssets.ndf", StringComparison.OrdinalIgnoreCase);
 
     private static MergeDecision Decide(string path, (CompiledInput Input, string File)[] providers,
-        IReadOnlyDictionary<string, int> payloadSizes, VanillaDatabases vanilla,
+        IReadOnlyDictionary<string, int> payloadSizes, VanillaDatabases vanilla, SourceBaseline? sourceBaseline,
         string? mergeDirectory, ConcurrentDictionary<string, IReadOnlyList<MergeDecision>> conflicts,
         ConcurrentBag<string> warnings, CancellationToken token)
     {
@@ -182,7 +182,20 @@ public sealed class MergePlanner(SourceDeltaAnalyzer deltaAnalyzer)
             return new MergeDecision(path, MergeDecisionKind.Override, largest.Input.Name,
                 $"Generator output taken from {largest.Input.Name}, the mod with the largest compiled payload.", largest.File, Overlap: true);
         }
-        if (!IsNdfBinary(primaryFile)) return overrideDecision;
+        if (!IsNdfBinary(primaryFile))
+        {
+            // A mod that ships vanilla's own source file has not changed it, so it must neither win nor conflict.
+            var changed = sourceBaseline is null ? providers
+                : providers.Where(p => !sourceBaseline.IsVanilla(path, p.File, token)).ToArray();
+            if (changed.Length == 0 || changed.Length == providers.Length) return overrideDecision;
+            var winner = changed[0];
+            return changed.Length == 1
+                ? new MergeDecision(path, MergeDecisionKind.Single, winner.Input.Name,
+                    $"Only {winner.Input.Name} changes this file from vanilla; the others ship it unchanged.", winner.File, Overlap: true)
+                : new MergeDecision(path, MergeDecisionKind.Override, winner.Input.Name,
+                    $"Atomic file: {winner.Input.Name} has priority over {string.Join(", ", changed.Skip(1).Select(p => p.Input.Name))}.",
+                    winner.File, Overlap: true);
+        }
 
         var baseBytes = vanilla.TryRead(path);
         NdfDatabase? baseDb = null;
