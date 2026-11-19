@@ -81,7 +81,7 @@ public sealed class CombineService(SourceDeltaAnalyzer deltaAnalyzer, IProcessRu
                 var vanilla = VanillaDatabases.Open(request.Paths.WarnoRoot, generatedConfig.GetInt("Properties", "ModGenVersion", -1));
                 Log(vanilla.Available
                     ? $"  Using vanilla databases from {vanilla.ArchivePath} as the delta baseline."
-                    : $"  [WARN] Vanilla databases (Glad.dat) not found ({vanilla.Searched}); overlapping databases fall back to whole-file priority.");
+                    : $"  [WARN] Vanilla databases (Glad.dat or Transactions.dat) not found ({vanilla.Searched}); overlapping databases fall back to whole-file priority.");
                 Report(20, "Delta merging databases");
                 Log($"  Planning and delta merging compiled databases: {string.Join(" > ", inputs.Select(x => x.Name))}...");
                 var mergeDirectory = Path.Combine(outputSource, ".combine-merged-" + Guid.NewGuid().ToString("N"));
@@ -243,13 +243,18 @@ public sealed class CombineService(SourceDeltaAnalyzer deltaAnalyzer, IProcessRu
 
     private static void SynthesizeConfig(CombineRequest request, MergePreview plan, IReadOnlyList<CompiledInput> inputs, IniDocument output)
     {
-        foreach (var decision in plan.Decisions.Where(x => x.RelativePath.StartsWith("Gen\\NDF\\", StringComparison.OrdinalIgnoreCase)
-                     && x.RelativePath.EndsWith(".ndfbin", StringComparison.OrdinalIgnoreCase)))
+        // Inputs published before the .txn format change had their databases renamed by the plan.
+        var legacyInputs = inputs.Where(i => !ShipsTransactionDatabases(i.Root)).ToHashSet();
+        bool Provides(CompiledInput input, string relativePath) =>
+            File.Exists(Path.Combine(input.Root, relativePath))
+            || legacyInputs.Contains(input) && NdfLayout.IsTransactionDatabase(relativePath)
+            && File.Exists(Path.Combine(input.Root, NdfLayout.ToLegacyPath(relativePath)));
+        foreach (var decision in plan.Decisions.Where(x => NdfLayout.IsDatabase(x.RelativePath)))
         {
-            var key = decision.RelativePath[8..^7].Replace('\\', '/');
+            var key = NdfLayout.ManifestKey(decision.RelativePath);
             // WARNO's fingerprint identifies the database revision rather than its content, so a merged database
             // takes the entry of an input that ships it, preferring the decision's winner.
-            var providers = inputs.Where(i => File.Exists(Path.Combine(i.Root, decision.RelativePath)))
+            var providers = inputs.Where(i => Provides(i, decision.RelativePath))
                 .OrderByDescending(i => decision.Winner.Split(" + ").Contains(i.Name)).ToArray();
             var fingerprint = providers.Select(i => i.ConfigKeys.GetValueOrDefault(key)).FirstOrDefault(f => !string.IsNullOrWhiteSpace(f));
             if (fingerprint is null)
@@ -257,6 +262,9 @@ public sealed class CombineService(SourceDeltaAnalyzer deltaAnalyzer, IProcessRu
                 // WARNO never fingerprints per-mod-name databases (Localisation/<Mod>, ResourcePacks/<Mod>), so the
                 // inputs' copies and the output's own have no manifest entry to carry over.
                 if (IsInputNamedDatabase(key)) continue;
+                // Some mods (RadioWarszawa, for one) publish a manifest with no [Config] fingerprints at all; the
+                // output then carries none for their databases either, as the mod itself does.
+                if (providers.Length > 0 && providers.All(p => p.ConfigKeys.Count == 0)) continue;
                 throw new CombineException($"{decision.Winner}'s selected database {decision.RelativePath} has no matching manifest fingerprint ({key}). Refresh or regenerate that input.");
             }
             output.Set("Config", key, fingerprint);
@@ -266,6 +274,12 @@ public sealed class CombineService(SourceDeltaAnalyzer deltaAnalyzer, IProcessRu
         output.Set("Properties", "ID", "0");
         output.Set("Properties", "DeckFormatVersion", Math.Max(output.GetInt("Properties", "DeckFormatVersion"),
             request.Mods.Max(m => m.DeckFormatVersion)).ToString());
+    }
+
+    private static bool ShipsTransactionDatabases(string root)
+    {
+        var ndf = Path.Combine(root, "Gen", "NDF");
+        return Directory.Exists(ndf) && Directory.EnumerateFiles(ndf, "*.txn", SearchOption.AllDirectories).Any();
     }
 
     private static bool IsInputNamedDatabase(string key)

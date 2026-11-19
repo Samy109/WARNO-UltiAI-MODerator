@@ -53,8 +53,7 @@ public sealed record MergeDecision(string RelativePath, MergeDecisionKind Kind, 
     };
     public string Category => Kind == MergeDecisionKind.ValueConflict ? "Value"
         : RelativePath.StartsWith("Gen\\NDF\\UI\\", StringComparison.OrdinalIgnoreCase) ? "UI Database"
-        : RelativePath.StartsWith("Gen\\NDF\\", StringComparison.OrdinalIgnoreCase)
-          && RelativePath.EndsWith(".ndfbin", StringComparison.OrdinalIgnoreCase) ? "NDF Database"
+        : Ndf.NdfLayout.IsDatabase(RelativePath) ? "NDF Database"
         : RelativePath.Equals("Gen\\ResourceFile\\Catalog.cat", StringComparison.OrdinalIgnoreCase) ? "Asset Catalog"
         : RelativePath.StartsWith("Gen\\", StringComparison.OrdinalIgnoreCase) ? "Compiled Asset"
         : "Source File";

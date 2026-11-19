@@ -147,14 +147,20 @@ public sealed class EdatArchive
     }
 }
 
-/// <summary>Vanilla compiled databases for one WARNO build, read from Data/PC/&lt;ModGenVersion&gt;/Glad.dat.</summary>
+/// <summary>
+/// Vanilla compiled databases for one WARNO build: Data/PC/&lt;ModGen&gt;/Glad.dat (.ndfbin), or since the November 2026
+/// update Data/PC/&lt;earlier build&gt;/&lt;ModGen&gt;/Transactions.dat (.txn, see <see cref="NdfLayout"/>).
+/// </summary>
 public sealed class VanillaDatabases
 {
     private readonly EdatArchive? _archive;
     public string? ArchivePath { get; }
 
-    private VanillaDatabases(EdatArchive? archive, string? path, string? searched = null)
-    { _archive = archive; ArchivePath = path; Searched = searched; }
+    /// <summary>The installed build stores databases as .txn transactions.</summary>
+    public bool TransactionLayout { get; }
+
+    private VanillaDatabases(EdatArchive? archive, string? path, string? searched = null, bool transactionLayout = false)
+    { _archive = archive; ArchivePath = path; Searched = searched; TransactionLayout = transactionLayout; }
 
     /// <summary>Where the archive was looked for and what was found there, for diagnostics when it is missing.</summary>
     public string? Searched { get; }
@@ -165,6 +171,12 @@ public sealed class VanillaDatabases
         var pcRoot = Path.Combine(warnoRoot, "Data", "PC");
         var path = Path.Combine(pcRoot, version.ToString(), "Glad.dat");
         if (File.Exists(path)) return new(new EdatArchive(path), path);
+        // Since the November 2026 update the databases are in Data\PC\<build>\<ModGen>\Transactions.dat.
+        var transactions = Directory.Exists(pcRoot)
+            ? Directory.EnumerateDirectories(pcRoot).Prepend(pcRoot)
+                .Select(dir => Path.Combine(dir, version.ToString(), "Transactions.dat")).FirstOrDefault(File.Exists)
+            : null;
+        if (transactions is not null) return new(new EdatArchive(transactions), transactions, transactionLayout: true);
         // Newer WARNO builds may keep the archive elsewhere under Data\PC; a single Glad.dat there is the installed build's.
         string[] found = [];
         try { found = Directory.Exists(pcRoot) ? Directory.GetFiles(pcRoot, "Glad.dat", SearchOption.AllDirectories) : []; }
@@ -173,15 +185,18 @@ public sealed class VanillaDatabases
         var listing = Directory.Exists(pcRoot)
             ? string.Join(", ", Directory.EnumerateFileSystemEntries(pcRoot).Take(12).Select(Path.GetFileName))
             : "folder does not exist";
-        return new(null, null, $"expected {path}; {found.Length} Glad.dat file(s) under {pcRoot}; contents: {listing}");
+        return new(null, null, $"expected {path} or a Transactions.dat for ModGen {version}; {found.Length} Glad.dat file(s) under {pcRoot}; contents: {listing}");
     }
 
     public bool Available => _archive is not null;
 
-    /// <summary>Gets the vanilla bytes for a mod-relative path such as Gen\NDF\GFX\Unit.ndfbin.</summary>
+    /// <summary>Gets the vanilla bytes for a mod-relative path such as Gen\NDF\GFX\Unit.txn.</summary>
     public byte[]? TryRead(string relativePath)
     {
         if (_archive is null) return null;
+        // The archive uses the installed build's layout; a database in the other layout maps onto it.
+        if (TransactionLayout && NdfLayout.IsLegacyDatabase(relativePath)) relativePath = NdfLayout.ToTransactionPath(relativePath);
+        else if (!TransactionLayout && NdfLayout.IsTransactionDatabase(relativePath)) relativePath = NdfLayout.ToLegacyPath(relativePath);
         var normalized = relativePath.Replace('\\', '/');
         if (normalized.StartsWith("Gen/", StringComparison.OrdinalIgnoreCase)) normalized = normalized[4..];
         return _archive.Entries.TryGetValue(normalized, out var entry) ? _archive.Read(entry) : null;

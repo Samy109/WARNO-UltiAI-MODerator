@@ -110,9 +110,13 @@ public sealed class MergePlanner(SourceDeltaAnalyzer deltaAnalyzer)
         bool provisional = false, CompiledInput? generated = null, SourceBaseline? sourceBaseline = null)
     {
         var contributors = generated is null ? inputs : [.. inputs, generated];
-        var files = contributors.Select(input => EnumerateRuntimeFiles(input.Root)
-            .Where(x => input != generated || IsOutputOwned(x.RelativePath, outputName))
-            .ToDictionary(x => x.RelativePath, x => x.FullPath, StringComparer.OrdinalIgnoreCase)).ToArray();
+        var listings = contributors.Select(input => EnumerateRuntimeFiles(input.Root)
+            .Where(x => input != generated || IsOutputOwned(x.RelativePath, outputName)).ToArray()).ToArray();
+        var transactionLayout = vanilla.TransactionLayout
+            || listings.Any(l => l.Any(x => NdfLayout.IsTransactionDatabase(x.RelativePath)));
+        var layoutNotes = new List<string>();
+        var files = contributors.Select((input, i) =>
+            MapToLayout(input.Name, listings[i], transactionLayout, layoutNotes)).ToArray();
         for (var i = 0; i < inputs.Count; i++)
             if (files[i].Count == 0 && !provisional)
                 throw new CombineException($"{inputs[i].Name} has no runtime payload.");
@@ -130,17 +134,48 @@ public sealed class MergePlanner(SourceDeltaAnalyzer deltaAnalyzer)
             decisions[path] = Decide(path, providers, payloadSizes, vanilla, sourceBaseline, mergeDirectory, conflicts, warnings, token);
         });
 
-        var ordered = paths.Select(p => decisions[p]).ToArray();
+        var tags = contributors.Select(input => EnumerateTagFiles(input.Root)
+            .Where(x => input != generated || IsOutputOwned(x.RelativePath, outputName))
+            .ToDictionary(x => x.RelativePath, x => x.FullPath, StringComparer.OrdinalIgnoreCase)).ToArray();
+        var ordered = paths.Select(p => decisions[p])
+            .SelectMany(d => TagFor(d, contributors, tags) is { } tag ? new[] { d, tag } : [d]).ToArray();
         var valueConflicts = paths.Where(conflicts.ContainsKey).SelectMany(p => conflicts[p]).ToArray();
         var notes = new List<string>();
         if (provisional) notes.Add("Provisional preview: editable SDK input will be compiled by WARNO during the build; the final report will reflect the exact compiled files.");
         if (!vanilla.Available)
-            notes.Add($"WARNO's vanilla databases (Glad.dat) were not found ({vanilla.Searched}), so overlapping databases fall back to whole-file priority.");
+            notes.Add($"WARNO's vanilla databases (Glad.dat or Transactions.dat) were not found ({vanilla.Searched}), so overlapping databases fall back to whole-file priority.");
         var merged = ordered.Count(d => d.Kind == MergeDecisionKind.Merged && !d.RelativePath.EndsWith(".txt", StringComparison.OrdinalIgnoreCase));
         if (merged > 0)
             notes.Add($"{merged:N0} database(s) were changed by several mods and are delta merged against vanilla; {valueConflicts.Length:N0} value conflict(s) resolved by priority ({string.Join(" > ", inputs.Select(i => i.Name))}).");
+        notes.AddRange(layoutNotes);
         notes.AddRange(warnings.Order(StringComparer.Ordinal));
         return new MergePreview(outputName, mods, ordered, notes, provisional, valueConflicts);
+    }
+
+    /// <summary>
+    /// Puts one mod's databases in the installed build's layout. On a .txn build, a mod published before the November
+    /// 2026 update ships only .ndfbin databases; WARNO looks for them under their .txn names and, finding none, fails
+    /// with "No writable component found" (for example 'ZZ:/NDF/Localisation/&lt;Mod&gt;/DicoDef.txn'). Their content
+    /// is the same container, so they are renamed. A mod that already ships .txn databases was rebuilt after the
+    /// update, and any .ndfbin it still carries is a stale leftover WARNO no longer reads, so those are left out.
+    /// </summary>
+    private static Dictionary<string, string> MapToLayout(string inputName,
+        IReadOnlyList<(string RelativePath, string FullPath)> listing, bool transactionLayout, List<string> notes)
+    {
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var rebuilt = listing.Any(x => NdfLayout.IsTransactionDatabase(x.RelativePath));
+        int converted = 0, stale = 0;
+        foreach (var (relativePath, fullPath) in listing)
+        {
+            if (!transactionLayout || !NdfLayout.IsLegacyDatabase(relativePath)) map[relativePath] = fullPath;
+            else if (rebuilt) stale++;
+            else { map[NdfLayout.ToTransactionPath(relativePath)] = fullPath; converted++; }
+        }
+        if (converted > 0)
+            notes.Add($"{inputName} was published before WARNO's November 2026 database format change; its {converted:N0} database(s) were renamed to the new .txn layout so WARNO can load them.");
+        if (stale > 0)
+            notes.Add($"{inputName} still carries {stale:N0} .ndfbin database(s) from before WARNO's format change; WARNO no longer reads them, so they were left out.");
+        return map;
     }
 
     private static readonly string[] FileManifests = ["Gen\\DeclaredFiles.txt", "Gen\\UsedFiles.txt"];
@@ -151,7 +186,8 @@ public sealed class MergePlanner(SourceDeltaAnalyzer deltaAnalyzer)
         FileManifests.Contains(path, StringComparer.OrdinalIgnoreCase)
         || path.Equals("Gen\\ResourceFile\\Catalog.cat", StringComparison.OrdinalIgnoreCase)
         || path.Split('\\').Any(segment => segment.Equals(outputName, StringComparison.OrdinalIgnoreCase)
-            || segment.Equals(outputName + ".ndfbin", StringComparison.OrdinalIgnoreCase));
+            || segment.Equals(outputName + ".ndfbin", StringComparison.OrdinalIgnoreCase)
+            || segment.Equals(outputName + ".txn", StringComparison.OrdinalIgnoreCase));
 
     private static bool IsGeneratorByproduct(string path) =>
         path.StartsWith("Gen\\Intermediate\\", StringComparison.OrdinalIgnoreCase)
@@ -272,6 +308,27 @@ public sealed class MergePlanner(SourceDeltaAnalyzer deltaAnalyzer)
         catch (NdfFormatException) { return false; }
     }
 
+    /// <summary>
+    /// Since WARNO's November 2026 database format change, each generated file ships with a <c>.tag</c> companion
+    /// (DicoDef.txn.tag, Mesh_All.spk.tag, ...), and WARNO only mounts a database whose tag is present: without it,
+    /// loading stops with "No writable component found: 'ZZ:/NDF/Localisation/&lt;Mod&gt;/DicoDef.txn'". A tag
+    /// follows its file: it comes from the mod whose copy was selected, or for a delta-merged database from the
+    /// highest-priority mod that changed it.
+    /// </summary>
+    private static MergeDecision? TagFor(MergeDecision decision, IReadOnlyList<CompiledInput> contributors,
+        IReadOnlyList<Dictionary<string, string>> tags)
+    {
+        if (decision.SourcePath is null && decision.Kind != MergeDecisionKind.Merged) return null;
+        var tagPath = decision.RelativePath + ".tag";
+        var winners = decision.Winner.Split(" + ");
+        var providers = Enumerable.Range(0, contributors.Count).Where(i => tags[i].ContainsKey(tagPath)).ToArray();
+        if (providers.Length == 0) return null;
+        var chosen = providers.FirstOrDefault(i => winners.Contains(contributors[i].Name), providers[0]);
+        var name = contributors[chosen].Name;
+        return new MergeDecision(tagPath, MergeDecisionKind.Single, name,
+            $"Generation tag of {decision.RelativePath}, taken from {name}.", tags[chosen][tagPath], Overlap: decision.Overlap);
+    }
+
     /// <summary>Generated file lists (DeclaredFiles.txt, UsedFiles.txt) become the union of every mod's lines.</summary>
     private static MergeDecision MergeManifest(string path, (CompiledInput Input, string File)[] providers, string? mergeDirectory)
     {
@@ -341,5 +398,14 @@ public sealed class MergePlanner(SourceDeltaAnalyzer deltaAnalyzer)
                 yield return (Path.GetRelativePath(root, file).Replace('/', '\\'), file);
             }
         }
+    }
+
+    /// <summary>The .tag companions of a mod's generated files; they are planned with their file (see <see cref="TagFor"/>).</summary>
+    internal static IEnumerable<(string RelativePath, string FullPath)> EnumerateTagFiles(string root)
+    {
+        var gen = Path.Combine(root, "Gen");
+        if (!Directory.Exists(gen)) yield break;
+        foreach (var file in Directory.EnumerateFiles(gen, "*.tag", SearchOption.AllDirectories))
+            yield return (Path.GetRelativePath(root, file).Replace('/', '\\'), file);
     }
 }
