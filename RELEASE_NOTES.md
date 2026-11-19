@@ -1,4 +1,13 @@
-﻿# WARNO UltiAI MODerator v2.0.2
+﻿# WARNO UltiAI MODerator v2.0.3
+
+- **Fixed "No writable component found" when loading a combined mod**: Since WARNO's November update, every database a mod generates (such as `Localisation\UltiAG\DicoDef.txn`) comes with a `.tag` file next to it, and WARNO won't load the database without it. The app left all `.tag` files out, so combined mods failed to load with `No writable component found: 'ZZ:/NDF/Localisation/UltiAG/DicoDef.txn'` (or another mod's name). Each `.tag` file now comes with its database, from the mod whose copy is used. For a database merged from several mods, it comes from the highest-priority mod that changed it.
+- **Works with WARNO's new database format**: The update renamed compiled databases from `.ndfbin` to `.txn` and moved WARNO's own copies into `Transactions.dat`. The app now reads the vanilla databases from there for delta merging. It renames the databases of mods published before the update to the new names, so the game can find them.
+
+Extract the entire Windows x64 ZIP before running the executable. Rebuild any combined mod made with an earlier version to pick up the fix.
+
+---
+
+# WARNO UltiAI MODerator v2.0.2
 
 - **Fixed a mod that changed nothing overriding the mods that did**: Source files under `GameData` (such as `GameData\Generated\Gameplay\TacticalUnits.ndf`) were taken whole from the primary mod. When the primary mod (for example UltiAI) shipped vanilla's unchanged copy and a lower-priority mod had changed it, the change was lost and the file was reported as a priority override. The app now compares each mod's copy with WARNO's own `ModData\base.zip` and ignores mods that left the file unchanged, so the mod that really changed it is kept. A database that can't be delta merged gets the same treatment. Rebuild your combined mods to pick this up.
 - **Finds WARNO's vanilla databases more reliably**: If `Glad.dat` isn't in `Data\PC\<ModGenVersion>`, the app now uses the only `Glad.dat` under `Data\PC`. If it still can't find one, the log and preview note say where it looked and what is in that folder, so databases changed by several mods aren't silently decided by whole-file priority without explanation.
