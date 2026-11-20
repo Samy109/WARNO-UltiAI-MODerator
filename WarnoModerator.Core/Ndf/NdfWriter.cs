@@ -3,16 +3,19 @@ using System.Text;
 
 namespace WarnoModerator.Core.Ndf;
 
-/// <summary>Compiles an <see cref="NdfDatabase"/> back into a zstd-compressed .ndfbin.</summary>
+/// <summary>
+/// Compiles an <see cref="NdfDatabase"/> into a zstd-compressed database laid out exactly as WARNO's compiler lays it
+/// out: an unchanged database is written back byte for byte. Each instance is one object.
+/// </summary>
 internal sealed class NdfWriter
 {
     private readonly NdfDatabase _db;
-    private readonly HashSet<NdfObject> _anonymous = [];
     private readonly List<NdfObject> _objects = [];
-    private readonly List<List<int>> _inlineChildren = [];
+    // Each object's references (inline objects, exports and anonymous top-level objects) in field order.
+    private readonly List<List<int>> _references = [];
+    private readonly Dictionary<NdfObject, int> _index = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<string, NdfObject> _exports = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _exportIndex = new(StringComparer.Ordinal);
-    private readonly Dictionary<NdfObject, int> _anonymousIndex = [];
-    private readonly Dictionary<NdfObject, int> _sharedIndex = [];
     private readonly List<int> _topo = [];
     private readonly IndexedTable<string> _classes = new(), _strings = new(), _tran = new(), _imports = new();
     private readonly IndexedTable<(int Class, string Name)> _props = new();
@@ -20,10 +23,21 @@ internal sealed class NdfWriter
     private NdfWriter(NdfDatabase db)
     {
         _db = db;
-        foreach (var top in db.TopLevel) if (top.ExportPath is null) _anonymous.Add(top.Value);
+        var topLevel = new HashSet<NdfObject>(ReferenceEqualityComparer.Instance);
+        foreach (var top in db.TopLevel)
+        {
+            if (!topLevel.Add(top.Value)) throw new NdfFormatException($"{top.ExportPath ?? "An anonymous object"} is listed twice at the top level.");
+            if (top.ExportPath is not null && !_exports.TryAdd(top.ExportPath, top.Value))
+                throw new NdfFormatException($"Duplicate export {top.ExportPath}.");
+        }
     }
 
-    public static byte[] Write(NdfDatabase db) => new NdfWriter(db).Compile();
+    public static (byte[] Database, byte[] DebugInfo) Write(NdfDatabase db)
+    {
+        var writer = new NdfWriter(db);
+        var database = writer.Compile();
+        return (database, NdfDebugInfo.Write(writer._objects.Select(o => o.Origin?.DebugLine ?? [])));
+    }
 
     private byte[] Compile()
     {
@@ -73,50 +87,57 @@ internal sealed class NdfWriter
         w.Write(bytes);
     }
 
-    private int Allocate(NdfObject value)
-    {
-        _objects.Add(value);
-        _inlineChildren.Add([]);
-        return _objects.Count - 1;
-    }
-
+    /// <summary>
+    /// Numbers objects as WARNO's compiler does: breadth first from each top-level object in declaration order, so
+    /// an object's direct references follow it, then theirs. An object referenced again (including an export or an
+    /// anonymous top-level object reached before its own turn) keeps its first number.
+    /// </summary>
     private void AssignIndices()
     {
+        var queue = new Queue<int>();
         foreach (var top in _db.TopLevel)
         {
-            var index = Allocate(top.Value);
-            if (top.ExportPath is null) _anonymousIndex.TryAdd(top.Value, index);
-            else if (!_exportIndex.TryAdd(top.ExportPath, index))
-                throw new NdfFormatException($"Duplicate export {top.ExportPath}.");
+            Resolve(top.Value, queue);
+            while (queue.Count > 0)
+            {
+                var index = queue.Dequeue();
+                var references = _references[index];
+                foreach (var field in _objects[index].Fields) Collect(field.Value, references, queue);
+            }
+        }
+        foreach (var top in _db.TopLevel)
+        {
+            var index = _index[top.Value];
             _topo.Add(index);
-            Visit(index);
+            if (top.ExportPath is not null) _exportIndex[top.ExportPath] = index;
         }
     }
 
-    // Pre-order layout: each inline object follows its first referrer, as the WARNO compiler emits them.
-    private void Visit(int index)
-    {
-        var children = _inlineChildren[index];
-        foreach (var field in _objects[index].Fields) VisitValue(field.Value, children);
-    }
-
-    private void VisitValue(NdfValue value, List<int> children)
+    private void Collect(NdfValue value, List<int> references, Queue<int> queue)
     {
         switch (value)
         {
-            case NdfObject child:
-                if (_anonymous.Contains(child)) return;
-                var shared = _db.SharedObjects.Contains(child);
-                if (shared && _sharedIndex.TryGetValue(child, out var existing)) { children.Add(existing); return; }
-                var index = Allocate(child);
-                if (shared) _sharedIndex[child] = index;
-                children.Add(index);
-                Visit(index);
+            case NdfObject child: references.Add(Resolve(child, queue)); break;
+            case NdfExportRef export:
+                if (!_exports.TryGetValue(export.Path, out var target))
+                    throw new NdfFormatException($"Reference to missing export {export.Path}.");
+                references.Add(Resolve(target, queue));
                 break;
-            case NdfList list: foreach (var item in list.Items) VisitValue(item, children); break;
-            case NdfMap map: foreach (var entry in map.Entries) { VisitValue(entry.Key, children); VisitValue(entry.Value, children); } break;
-            case NdfPair pair: VisitValue(pair.First, children); VisitValue(pair.Second, children); break;
+            case NdfList list: foreach (var item in list.Items) Collect(item, references, queue); break;
+            case NdfMap map: foreach (var entry in map.Entries) { Collect(entry.Key, references, queue); Collect(entry.Value, references, queue); } break;
+            case NdfPair pair: Collect(pair.First, references, queue); Collect(pair.Second, references, queue); break;
         }
+    }
+
+    private int Resolve(NdfObject value, Queue<int> queue)
+    {
+        if (_index.TryGetValue(value, out var existing)) return existing;
+        var index = _objects.Count;
+        _objects.Add(value);
+        _references.Add([]);
+        _index[value] = index;
+        queue.Enqueue(index);
+        return index;
     }
 
     private void WriteObjects(BinaryWriter w)
@@ -132,7 +153,7 @@ internal sealed class NdfWriter
                 var owner = _db.PropertyOwners.TryGetValue((value.ClassName, field.Key), out var declaring)
                     ? _classes.Get(declaring) : cls;
                 w.Write(_props.Get((owner, field.Key)));
-                WriteValue(w, field.Value, _inlineChildren[i], ref cursor);
+                WriteValue(w, field.Value, _references[i], ref cursor);
             }
             w.Write(0xABABABABu);
         }
@@ -156,16 +177,12 @@ internal sealed class NdfWriter
             case NdfImport import:
                 w.Write(0x09u); w.Write(0xAAAAAAAAu); w.Write(_imports.Get(import.Path));
                 break;
-            case NdfExportRef export:
-                if (!_exportIndex.TryGetValue(export.Path, out var target))
-                    throw new NdfFormatException($"Reference to missing export {export.Path}.");
-                WriteObjectRef(w, target);
+            case NdfExportRef:
+            case NdfObject:
+                WriteObjectRef(w, children[cursor++]);
                 break;
             case NdfNull:
                 w.Write(0x09u); w.Write(0xBBBBBBBBu); w.Write(uint.MaxValue); w.Write(uint.MaxValue);
-                break;
-            case NdfObject child:
-                WriteObjectRef(w, _anonymous.Contains(child) ? _anonymousIndex[child] : children[cursor++]);
                 break;
             case NdfList list:
                 w.Write(0x11u); w.Write(list.Items.Count);
@@ -231,9 +248,11 @@ internal sealed class NdfWriter
         w.Write(buffer.ToArray());
     }
 
-    // Pre-order: header, child offset array, then each child subtree; offsets are back-patched.
+    // Pre-order: header, child offset array, then each child subtree; offsets are back-patched. Children are in
+    // TRAN order, as WARNO writes them.
     private static void WriteNode(MemoryStream s, TreeNode node)
     {
+        node.Children.Sort((a, b) => a.Segment.CompareTo(b.Segment));
         Span<byte> header = stackalloc byte[12];
         BinaryPrimitives.WriteInt32LittleEndian(header, node.Segment);
         BinaryPrimitives.WriteInt32LittleEndian(header[4..], node.Target);

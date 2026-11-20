@@ -78,15 +78,16 @@ public sealed class WarnoLocator
             }
         }
 
-        foreach (var fallback in new[]
+        // Steam's default install folders, for installs the registry doesn't list.
+        foreach (var defaultRoot in new[]
                  {
                      @"C:\Program Files (x86)\Steam",
                      @"C:\Program Files\Steam"
                  })
         {
-            if (Directory.Exists(fallback))
+            if (Directory.Exists(defaultRoot))
             {
-                yield return fallback;
+                yield return defaultRoot;
             }
         }
     }

@@ -90,10 +90,36 @@ public sealed class NdfExportRef(string path) : NdfValue
     public override string Describe() => Path;
 }
 
-public sealed class NdfObject(string className, IReadOnlyList<KeyValuePair<string, NdfValue>> fields) : NdfValue
+/// <summary>One decompiled database: what its objects' origins point back to.</summary>
+public sealed class NdfSource
+{
+    internal NdfSource(IReadOnlyList<byte[]>? debugLines) => DebugLines = debugLines;
+
+    /// <summary>The .dbg line of each object by number (an empty line means no debug info), or null without a .dbg.</summary>
+    public IReadOnlyList<byte[]>? DebugLines { get; }
+}
+
+/// <summary>Identity of one compiled object: its number in one decompiled database. Compared by reference.</summary>
+public sealed class NdfOrigin(NdfSource source, int index)
+{
+    public NdfSource Source { get; } = source;
+    public int Index { get; } = index;
+
+    /// <summary>The object's .dbg line; empty when its database came without debug info.</summary>
+    public byte[] DebugLine => Source.DebugLines?[Index] ?? [];
+}
+
+/// <param name="origin">The decompiled object this instance stands for (see <see cref="Origin"/>).</param>
+public sealed class NdfObject(string className, IReadOnlyList<KeyValuePair<string, NdfValue>> fields, NdfOrigin? origin = null) : NdfValue
 {
     public string ClassName { get; } = className;
     public IReadOnlyList<KeyValuePair<string, NdfValue>> Fields { get; } = fields;
+
+    /// <summary>
+    /// The compiled object this instance was decompiled from, kept by the copies the merger makes of it, so a written
+    /// object carries its debug line. Not part of equality; null for objects with no compiled counterpart.
+    /// </summary>
+    public NdfOrigin? Origin { get; } = origin;
 
     public NdfValue? Get(string name)
     {
@@ -169,7 +195,11 @@ public sealed record NdfTopLevel(string? ExportPath, NdfObject Value)
     public object Key => ExportPath is null ? Value : ExportPath;
 }
 
-public sealed class NdfDatabase(IReadOnlyList<NdfTopLevel> topLevel, IReadOnlySet<NdfObject> sharedObjects,
+/// <summary>
+/// A decompiled database. Object identity is by instance: one instance is one compiled object, however many
+/// places reference it, and separate instances are separate objects even when their content is equal.
+/// </summary>
+public sealed class NdfDatabase(IReadOnlyList<NdfTopLevel> topLevel,
     IReadOnlyDictionary<(string Class, string Property), string> propertyOwners)
 {
     public IReadOnlyList<NdfTopLevel> TopLevel { get; } = topLevel;
@@ -177,11 +207,13 @@ public sealed class NdfDatabase(IReadOnlyList<NdfTopLevel> topLevel, IReadOnlySe
     /// <summary>Declaring class of inherited properties, keyed by (object class, property).</summary>
     public IReadOnlyDictionary<(string Class, string Property), string> PropertyOwners { get; } = propertyOwners;
 
-    /// <summary>Nested objects the compiler emitted once and referenced from several places.</summary>
-    public IReadOnlySet<NdfObject> SharedObjects { get; } = sharedObjects;
+    /// <param name="debugInfo">The database's .dbg companion, when it has one.</param>
+    public static NdfDatabase Load(byte[] file, byte[]? debugInfo = null) => NdfReader.Read(file, debugInfo);
 
-    public static NdfDatabase Load(byte[] file) => NdfReader.Read(file);
-    public byte[] Save() => NdfWriter.Write(this);
+    public byte[] Save() => NdfWriter.Write(this).Database;
+
+    /// <summary>The compiled database and its .dbg companion, whose lines follow the written object order.</summary>
+    public (byte[] Database, byte[] DebugInfo) SaveWithDebugInfo() => NdfWriter.Write(this);
 
     internal static string Latin1(ReadOnlySpan<byte> bytes) => Encoding.Latin1.GetString(bytes);
 }

@@ -81,7 +81,7 @@ public sealed class CombineService(SourceDeltaAnalyzer deltaAnalyzer, IProcessRu
                 var vanilla = VanillaDatabases.Open(request.Paths.WarnoRoot, generatedConfig.GetInt("Properties", "ModGenVersion", -1));
                 Log(vanilla.Available
                     ? $"  Using vanilla databases from {vanilla.ArchivePath} as the delta baseline."
-                    : $"  [WARN] Vanilla databases (Glad.dat or Transactions.dat) not found ({vanilla.Searched}); overlapping databases fall back to whole-file priority.");
+                    : $"  WARNO's vanilla databases were not found ({vanilla.Searched}); databases several mods change can't be merged without them.");
                 Report(20, "Delta merging databases");
                 Log($"  Planning and delta merging compiled databases: {string.Join(" > ", inputs.Select(x => x.Name))}...");
                 var mergeDirectory = Path.Combine(outputSource, ".combine-merged-" + Guid.NewGuid().ToString("N"));
@@ -91,7 +91,7 @@ public sealed class CombineService(SourceDeltaAnalyzer deltaAnalyzer, IProcessRu
                     var generated = request.Mods.Any(m => m.Kind == ModKind.EditableSource) ? null
                         : new CompiledInput(request.OutputName, outputRuntime, generatedConfig.GetSection("Config"));
                     plan = MergePlanner.CreateCompiledPlan(request.OutputName, request.Mods, inputs, vanilla, mergeDirectory, token,
-                        generated: generated, sourceBaseline: SourceBaseline.TryOpen(request.Paths.ModDataBaseZip));
+                        SourceBaseline.Open(request.Paths.ModDataBaseZip), generated: generated);
                     foreach (var warning in plan.Warnings) Log("  [NOTE] " + warning);
                     ComposeCompiledPayload(request, plan, inputs, generatedConfig, outputSource, outputRuntime, Log, Report, token);
                 }

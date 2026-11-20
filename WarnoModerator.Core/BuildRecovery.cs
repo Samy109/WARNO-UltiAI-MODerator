@@ -18,7 +18,18 @@ public sealed class BuildRecovery
         catch (IOException ex) { throw new CombineException($"Another operation is using '{name}'. Close it or wait for it to finish.", ex); }
     }
 
-    public IReadOnlyList<RecoveryRecord> Find(WarnoPaths paths)
+    /// <summary>A build holds its output's lock while it runs, in this or another window.</summary>
+    private static bool IsRunning(WarnoPaths paths, string name)
+    {
+        try { using (AcquireLock(paths, name)) return false; }
+        catch (CombineException) { return true; }
+    }
+
+    /// <summary>Interrupted builds waiting for recovery; a build that is still running is not one.</summary>
+    public IReadOnlyList<RecoveryRecord> Find(WarnoPaths paths) =>
+        ReadRecords(paths).Where(record => !IsRunning(paths, record.OutputName)).ToArray();
+
+    private static List<RecoveryRecord> ReadRecords(WarnoPaths paths)
     {
         var records = new List<RecoveryRecord>();
         if (!Directory.Exists(paths.ModsRoot)) return records;
@@ -38,7 +49,8 @@ public sealed class BuildRecovery
 
     internal RecoveryRecord Begin(WarnoPaths paths, string name)
     {
-        if (Find(paths).Any(x => x.OutputName.Equals(name, StringComparison.OrdinalIgnoreCase)))
+        // The caller holds this output's lock, so every record for it is a leftover of an interrupted build.
+        if (ReadRecords(paths).Any(x => x.OutputName.Equals(name, StringComparison.OrdinalIgnoreCase)))
             throw new CombineException($"An interrupted rebuild of '{name}' requires recovery. Refresh mods to recover it first.");
         var record = new RecoveryRecord(Guid.NewGuid().ToString("N"), name,
             Directory.Exists(Path.Combine(paths.ModsRoot, name)), Directory.Exists(Path.Combine(paths.SavedModsRoot, name)));

@@ -165,27 +165,20 @@ public sealed class VanillaDatabases
     /// <summary>Where the archive was looked for and what was found there, for diagnostics when it is missing.</summary>
     public string? Searched { get; }
 
+    /// <summary>
+    /// Opens the vanilla databases of one ModGen revision: Data\PC\&lt;ModGen&gt;\Transactions.dat since the November
+    /// 2026 update, Data\PC\&lt;ModGen&gt;\Glad.dat before it. Nothing else is accepted, because another build's
+    /// databases would make every merge wrong.
+    /// </summary>
     public static VanillaDatabases Open(string warnoRoot, int? modGenVersion)
     {
         if (modGenVersion is not int version) return new(null, null, "no ModGenVersion to look up");
-        var pcRoot = Path.Combine(warnoRoot, "Data", "PC");
-        var path = Path.Combine(pcRoot, version.ToString(), "Glad.dat");
-        if (File.Exists(path)) return new(new EdatArchive(path), path);
-        // Since the November 2026 update the databases are in Data\PC\<build>\<ModGen>\Transactions.dat.
-        var transactions = Directory.Exists(pcRoot)
-            ? Directory.EnumerateDirectories(pcRoot).Prepend(pcRoot)
-                .Select(dir => Path.Combine(dir, version.ToString(), "Transactions.dat")).FirstOrDefault(File.Exists)
-            : null;
-        if (transactions is not null) return new(new EdatArchive(transactions), transactions, transactionLayout: true);
-        // Newer WARNO builds may keep the archive elsewhere under Data\PC; a single Glad.dat there is the installed build's.
-        string[] found = [];
-        try { found = Directory.Exists(pcRoot) ? Directory.GetFiles(pcRoot, "Glad.dat", SearchOption.AllDirectories) : []; }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
-        if (found.Length == 1) return new(new EdatArchive(found[0]), found[0]);
-        var listing = Directory.Exists(pcRoot)
-            ? string.Join(", ", Directory.EnumerateFileSystemEntries(pcRoot).Take(12).Select(Path.GetFileName))
-            : "folder does not exist";
-        return new(null, null, $"expected {path} or a Transactions.dat for ModGen {version}; {found.Length} Glad.dat file(s) under {pcRoot}; contents: {listing}");
+        var folder = Path.Combine(warnoRoot, "Data", "PC", version.ToString());
+        var transactions = Path.Combine(folder, "Transactions.dat");
+        if (File.Exists(transactions)) return new(new EdatArchive(transactions), transactions, transactionLayout: true);
+        var glad = Path.Combine(folder, "Glad.dat");
+        if (File.Exists(glad)) return new(new EdatArchive(glad), glad);
+        return new(null, null, $"neither {transactions} nor {glad} exists");
     }
 
     public bool Available => _archive is not null;
@@ -200,5 +193,36 @@ public sealed class VanillaDatabases
         var normalized = relativePath.Replace('\\', '/');
         if (normalized.StartsWith("Gen/", StringComparison.OrdinalIgnoreCase)) normalized = normalized[4..];
         return _archive.Entries.TryGetValue(normalized, out var entry) ? _archive.Read(entry) : null;
+    }
+}
+
+/// <summary>
+/// A database's .dbg companion: a u32 length then a zstd frame of text with one line per object, in object order
+/// ("name;file;line;column", or an empty line for an object without debug info).
+/// </summary>
+public static class NdfDebugInfo
+{
+    public static IReadOnlyList<byte[]> Read(byte[] file)
+    {
+        if (file.Length < 4) throw new NdfFormatException("Truncated debug info.");
+        var size = (int)BinaryPrimitives.ReadUInt32LittleEndian(file);
+        var text = new byte[size];
+        if (new ZstdSharp.Decompressor().Unwrap(file.AsSpan(4), text) != size) throw new NdfFormatException("Debug info size mismatch.");
+        var lines = new List<byte[]>();
+        for (int start = 0, i = 0; i < text.Length; i++)
+            if (text[i] == (byte)'\n') { lines.Add(text[start..i]); start = i + 1; }
+        return lines;
+    }
+
+    public static byte[] Write(IEnumerable<byte[]> lines)
+    {
+        var text = new MemoryStream();
+        foreach (var line in lines) { text.Write(line); text.WriteByte((byte)'\n'); }
+        using var compressor = new ZstdSharp.Compressor(3);
+        var packed = compressor.Wrap(text.ToArray());
+        var file = new byte[4 + packed.Length];
+        BinaryPrimitives.WriteUInt32LittleEndian(file, (uint)text.Length);
+        packed.CopyTo(file.AsSpan(4));
+        return file;
     }
 }

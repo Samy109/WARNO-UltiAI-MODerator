@@ -2,7 +2,7 @@ using System.Buffers.Binary;
 
 namespace WarnoModerator.Core.Ndf;
 
-/// <summary>Decompiles an .ndfbin into an <see cref="NdfDatabase"/>.</summary>
+/// <summary>Decompiles a compiled database (.txn, or .ndfbin before the November 2026 update) into an <see cref="NdfDatabase"/>.</summary>
 internal sealed class NdfReader
 {
     private const uint ObjectEnd = 0xABABABAB, ImportRef = 0xAAAAAAAA, ObjectRef = 0xBBBBBBBB;
@@ -23,13 +23,12 @@ internal sealed class NdfReader
     private readonly List<(int Class, List<(int Prop, object Value)> Fields)> _raw = [];
     private readonly Dictionary<int, string> _exports, _imports;
     private readonly int[] _topo;
-    private readonly HashSet<int> _topoSet;
     private readonly NdfObject?[] _built;
     private readonly bool[] _building;
-    private readonly int[] _references;
     private readonly Dictionary<(string, string), string> _owners = [];
+    private readonly NdfSource _source;
 
-    private NdfReader(byte[] file)
+    private NdfReader(byte[] file, byte[]? debugInfo)
     {
         _d = NdfContainer.Decompress(file, out var toc);
         var tables = ReadToc((int)toc);
@@ -42,14 +41,16 @@ internal sealed class NdfReader
         var (topoOffset, topoSize) = tables["TOPO"];
         _topo = new int[topoSize / 4];
         for (var i = 0; i < _topo.Length; i++) _topo[i] = (int)U32(topoOffset + 4 * i);
-        _topoSet = [.. _topo];
         ReadObjects(tables["OBJE"]);
         _built = new NdfObject?[_raw.Count];
         _building = new bool[_raw.Count];
-        _references = new int[_raw.Count];
+        var debugLines = debugInfo is null ? null : NdfDebugInfo.Read(debugInfo);
+        if (debugLines is not null && debugLines.Count != _raw.Count)
+            throw new NdfFormatException($"The debug info lists {debugLines.Count:N0} objects but the database has {_raw.Count:N0}.");
+        _source = new NdfSource(debugLines);
     }
 
-    public static NdfDatabase Read(byte[] file) => new NdfReader(file).Build();
+    public static NdfDatabase Read(byte[] file, byte[]? debugInfo = null) => new NdfReader(file, debugInfo).Build();
 
     private uint U32(int p) => BinaryPrimitives.ReadUInt32LittleEndian(_d.AsSpan(p));
 
@@ -187,25 +188,11 @@ internal sealed class NdfReader
 
     private NdfDatabase Build()
     {
-        foreach (var (_, fields) in _raw)
-            foreach (var (_, value) in fields) CountReferences(value);
         var topLevel = new List<NdfTopLevel>(_topo.Length);
         foreach (var index in _topo) topLevel.Add(new NdfTopLevel(_exports.GetValueOrDefault(index), BuildObject(index)));
-        var shared = new HashSet<NdfObject>();
-        for (var i = 0; i < _raw.Count; i++)
-            if (!_topoSet.Contains(i) && _references[i] > 1) shared.Add(BuildObject(i));
-        return new NdfDatabase(topLevel, shared, _owners);
-    }
-
-    private void CountReferences(object value)
-    {
-        switch (value)
-        {
-            case RawRef r: _references[r.Index]++; break;
-            case RawList l: foreach (var item in l.Items) CountReferences(item); break;
-            case RawMap m: foreach (var (k, v) in m.Entries) { CountReferences(k); CountReferences(v); } break;
-            case RawPair pair: CountReferences(pair.First); CountReferences(pair.Second); break;
-        }
+        var unreachable = Array.FindIndex(_built, o => o is null);
+        if (unreachable >= 0) throw new NdfFormatException($"Object {unreachable} is not reachable from the top level.");
+        return new NdfDatabase(topLevel, _owners);
     }
 
     private NdfObject BuildObject(int index)
@@ -222,7 +209,7 @@ internal sealed class NdfReader
             fields[i] = new(name, Convert(raw[i].Value));
         }
         _building[index] = false;
-        return _built[index] = new NdfObject(_classes[cls], fields);
+        return _built[index] = new NdfObject(_classes[cls], fields, new NdfOrigin(_source, index));
     }
 
     private NdfValue Convert(object value) => value switch

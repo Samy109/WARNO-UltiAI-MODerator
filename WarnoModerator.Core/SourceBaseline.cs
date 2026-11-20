@@ -25,12 +25,12 @@ public sealed class SourceBaseline
         }
     }
 
-    /// <summary>Hashes vanilla's source files, or returns null when base.zip is missing or unreadable.</summary>
-    public static SourceBaseline? TryOpen(string? zipPath)
+    /// <summary>Hashes vanilla's source files from WARNO's ModDataase.zip, which every install has.</summary>
+    public static SourceBaseline Open(string zipPath)
     {
-        if (zipPath is null || !File.Exists(zipPath)) return null;
         try { return new SourceBaseline(zipPath); }
-        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException) { return null; }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException)
+        { throw new CombineException($"WARNO's vanilla mod sources ({zipPath}) can't be read: {ex.Message} Verify WARNO's files in Steam.", ex); }
     }
 
     /// <summary>True when vanilla ships this file and <paramref name="file"/> is identical to it.</summary>

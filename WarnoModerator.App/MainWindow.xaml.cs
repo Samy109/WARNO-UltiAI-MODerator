@@ -1,16 +1,19 @@
 using Microsoft.Win32;
 using System.ComponentModel;
 using System.IO;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Interop;
 using WarnoModerator.Core;
 
 namespace WarnoModerator.App;
 
 public sealed record OrderedMod(int Index, ModDescriptor Mod)
 {
-    public string Rank => $"{Index + 1}.";
+    public string Position => (Index + 1).ToString();
     public Visibility PrimaryVisibility => Index == 0 ? Visibility.Visible : Visibility.Collapsed;
 }
 
@@ -35,19 +38,36 @@ public partial class MainWindow : Window
     private string _lastLoggedPreviewKey = "";
     private string _status = "Add at least two mods to combine.";
 
-    public MainWindow() => InitializeComponent();
+    public MainWindow()
+    {
+        InitializeComponent();
+        var version = Assembly.GetExecutingAssembly().GetName().Version;
+        VersionText.Text = version is null ? "Combine WARNO mods" : $"Combine WARNO mods · v{version.Major}.{version.Minor}.{version.Build}";
+        SourceInitialized += (_, _) => UseDarkTitleBar();
+    }
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(IntPtr window, int attribute, ref int value, int size);
+
+    /// <summary>Asks Windows for a dark title bar to match the window (Windows 10 20H1 and later; ignored before).</summary>
+    private void UseDarkTitleBar()
+    {
+        const int immersiveDarkMode = 20;
+        var enabled = 1;
+        DwmSetWindowAttribute(new WindowInteropHelper(this).Handle, immersiveDarkMode, ref enabled, sizeof(int));
+    }
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
     {
         await RunUiAsync(async token =>
         {
             var detected = await Task.Run(() => new WarnoLocator().Locate(), token);
-            WarnoPathBox.Text = detected?.WarnoRoot ?? @"C:\Program Files (x86)\Steam\steamapps\common\WARNO";
             if (detected is null)
             {
-                _status = "Choose the WARNO installation folder, then refresh mods.";
+                _status = "WARNO wasn't found in your Steam libraries. Choose its folder with the folder button.";
                 return;
             }
+            ShowWarnoPath(detected.WarnoRoot);
             await RefreshModsAsync(token);
         }, "Finding WARNO");
     }
@@ -56,7 +76,7 @@ public partial class MainWindow : Window
     {
         var dialog = new OpenFolderDialog { Title = "Select the WARNO installation folder", InitialDirectory = WarnoPathBox.Text };
         if (dialog.ShowDialog() != true) return;
-        WarnoPathBox.Text = dialog.FolderName;
+        ShowWarnoPath(dialog.FolderName);
         await RunUiAsync(RefreshModsAsync, "Refreshing mods");
     }
 
@@ -116,6 +136,7 @@ public partial class MainWindow : Window
             if (select is not null) MergeOrderList.SelectedIndex = _order.IndexOf(select);
             AvailableModBox.ItemsSource = _installed.Where(m => !_order.Any(o => SamePath(o.RootPath, m.RootPath))).ToArray();
             AvailableModBox.SelectedIndex = AvailableModBox.Items.Count > 0 ? 0 : -1;
+            EmptyModsHint.Visibility = _order.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         }
         finally { _settingSelection = false; }
         UpdateOrderButtons();
@@ -161,6 +182,7 @@ public partial class MainWindow : Window
     }
 
     private void MergeOrder_SelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateOrderButtons();
+    private void AvailableMod_SelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateOrderButtons();
 
     private void UpdateOrderButtons()
     {
@@ -358,7 +380,7 @@ public partial class MainWindow : Window
     {
         _operation?.Cancel();
         CancelButton.IsEnabled = false;
-        ProgressText.Text = "Cancelling; waiting for generation and recovery to finish…";
+        ProgressText.Text = "Cancelling, and waiting for WARNO and recovery to finish…";
     }
 
     private void Window_Closing(object? sender, CancelEventArgs e)
@@ -381,11 +403,33 @@ public partial class MainWindow : Window
         }
     }
 
-    private void ClearPreview() { _preview = null; PreviewGrid.ItemsSource = null; SummaryText.Text = ""; }
-    private void Filter_Changed(object sender, RoutedEventArgs e) { if (PreviewGrid is not null) ApplyPreviewFilter(); }
+    private void ClearPreview()
+    {
+        _preview = null;
+        PreviewGrid.ItemsSource = null;
+        SummaryText.Text = "Every file the combined mod will contain, and how each one is produced.";
+        foreach (var stat in new[] { StatFiles, StatMerged, StatConflicts, StatOverrides, StatSingle, StatIdentical }) stat.Text = "–";
+        EmptyPlanTitle.Text = _previewError is null ? "No plan yet" : "This combination can't be built";
+        EmptyPlanText.Text = _previewError
+            ?? "Add two or more mods on the left. The plan shows every file and every value the mods disagree on before anything is built.";
+        EmptyPlan.Visibility = Visibility.Visible;
+    }
+
+    private void Filter_Changed(object sender, RoutedEventArgs e)
+    {
+        if (SearchPlaceholder is not null) SearchPlaceholder.Visibility = SearchBox.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (PreviewGrid is not null) ApplyPreviewFilter();
+    }
+
     private void ApplyPreviewFilter()
     {
         if (_preview is null) return;
+        StatFiles.Text = _preview.Decisions.Count.ToString("N0");
+        StatMerged.Text = _preview.MergedCount.ToString("N0");
+        StatConflicts.Text = _preview.ValueConflictCount.ToString("N0");
+        StatOverrides.Text = _preview.OverrideCount.ToString("N0");
+        StatSingle.Text = _preview.SingleCount.ToString("N0");
+        StatIdentical.Text = _preview.IdenticalCount.ToString("N0");
         var query = SearchBox.Text.Trim();
         var all = _preview.Decisions.Concat(_preview.Conflicts).ToArray();
         var decisions = all.Where(d =>
@@ -396,7 +440,11 @@ public partial class MainWindow : Window
                 || d.Winner.Contains(query, StringComparison.OrdinalIgnoreCase)
                 || d.Detail.Contains(query, StringComparison.OrdinalIgnoreCase))).ToArray();
         PreviewGrid.ItemsSource = decisions;
-        SummaryText.Text = $"{(_preview.Provisional ? "Provisional · " : "")}{decisions.Length:N0}/{all.Length:N0} rows · {_preview.Summary}";
+        SummaryText.Text = $"{string.Join(" > ", _preview.Mods.Select(m => m.Name))} · showing {decisions.Length:N0} of {all.Length:N0} rows"
+            + (_preview.Provisional ? " · provisional until editable mods are regenerated" : "");
+        EmptyPlanTitle.Text = "Nothing matches";
+        EmptyPlanText.Text = "No row matches the search or filter.";
+        EmptyPlan.Visibility = decisions.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private async void Export_Click(object sender, RoutedEventArgs e)
@@ -456,6 +504,7 @@ public partial class MainWindow : Window
         CancelButton.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         CancelButton.IsEnabled = busy;
         if (busy) { BusyBar.Value = 0; ProgressText.Text = stage; }
+        ConflictsOnlyBox.IsEnabled = SearchBox.IsEnabled = !busy;
         BrowseButton.IsEnabled = RefreshButton.IsEnabled = WarnoPathBox.IsEnabled = AvailableModBox.IsEnabled = MergeOrderList.IsEnabled = !busy;
         ExistingMergeBox.IsEnabled = !busy && ExistingMergeBox.Items.Count > 0;
         UpdateOrderButtons();
@@ -472,7 +521,7 @@ public partial class MainWindow : Window
 
         CombineButton.IsEnabled = !_busy && selected && valid && !exists && compatible;
         UpdateButton.IsEnabled = !_busy && selected && _existing is not null && compatible;
-        UpdateButton.Content = _changedMods.Count > 0 ? "Update and Rebuild" : "Rebuild Existing";
+        UpdateButton.Content = _changedMods.Count > 0 ? "Update and rebuild" : "Rebuild existing";
         OutputNameBox.IsEnabled = !_busy;
         ExportButton.IsEnabled = !_busy && _preview is not null;
 
@@ -487,7 +536,7 @@ public partial class MainWindow : Window
                         : $"Create a new combined mod named '{name}'.";
 
         UpdateButton.ToolTip = _existing is null
-            ? "No existing merge for these mods yet. Use 'Create as New' first."
+            ? "No combined mod exists for these mods yet. Create one first."
             : !compatible
                 ? _previewError
                 : _changedMods.Count > 0
@@ -496,6 +545,15 @@ public partial class MainWindow : Window
 
         StatusText.Text = _status;
         StatusText.Visibility = _busy ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    /// <summary>Shows the folder with its end in view: the WARNO folder name matters more than the drive.</summary>
+    private void ShowWarnoPath(string path)
+    {
+        WarnoPathBox.Text = path;
+        WarnoPathBox.ToolTip = path;
+        WarnoPathBox.CaretIndex = path.Length;
+        WarnoPathBox.ScrollToEnd();
     }
 
     private static bool SamePath(string? left, string? right) =>

@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -21,6 +22,12 @@ public sealed class NdfMerger
     private const string DescriptorIdField = "DescriptorId";
     private static readonly string[] IdentityFields = ["_ShortDatabaseName", "Name", DescriptorIdField];
     private readonly List<NdfConflict> _conflicts = [];
+    // Merging the same input objects again yields the same merged object, so an object several parents share stays one.
+    private readonly Dictionary<InstanceKey, NdfObject> _mergedObjects = [];
+    // Every input's instance of a private constant, mapped to the merged constant it became.
+    private readonly Dictionary<NdfObject, NdfObject> _constants = new(ReferenceEqualityComparer.Instance);
+    // Merged constants vanilla has and some mod removed (or replaced): kept only while something still references them.
+    private readonly HashSet<NdfObject> _removedConstants = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<string> _changedBy = [];
     private int _changedObjects;
 
@@ -34,16 +41,14 @@ public sealed class NdfMerger
         var merger = new NdfMerger();
         (vanilla, variants) = merger.UnifyDescriptors(vanilla, variants, token);
         var merged = vanilla is null ? merger.MergeWithoutBase(variants, token) : merger.MergeTopLevel(vanilla, variants, token);
+        var sources = variants.Select(v => v.Database).Prepend(vanilla).OfType<NdfDatabase>().ToArray();
         var owners = new Dictionary<(string, string), string>();
-        var shared = new HashSet<NdfObject>();
-        foreach (var db in variants.Select(v => v.Database).Append(vanilla).OfType<NdfDatabase>())
-        {
+        foreach (var db in sources)
             foreach (var pair in db.PropertyOwners) owners.TryAdd(pair.Key, pair.Value);
-            shared.UnionWith(db.SharedObjects);
-        }
         merged = merger.RestoreMissingExports(merged, vanilla, variants);
-        merged = merger.SettleDescriptors(merged, vanilla, variants, shared);
-        return new NdfMergeResult(new NdfDatabase(merged, shared, owners), merger._conflicts,
+        merged = merger.SettleDescriptors(merged, vanilla, variants);
+        merged = merger.SettleConstants(merged, sources);
+        return new NdfMergeResult(new NdfDatabase(merged, owners), merger._conflicts,
             variants.Select(v => v.ModName).Where(merger._changedBy.Contains).ToArray(), merger._changedObjects);
     }
 
@@ -69,10 +74,10 @@ public sealed class NdfMerger
                 slots[i] ??= nested;
             }
         }
-        if (versions.Values.All(slots => slots.OfType<NdfObject>().Distinct().Count() == 1)) return (vanilla, variants);
-
+        // Every database is rewritten, even when the descriptors agree: vanilla and each mod hold their own instance of
+        // each descriptor, and the merged database must hold exactly one.
         var descriptors = new Dictionary<NdfValue, NdfObject>();
-        var unified = new Dictionary<NdfObject, NdfObject>();
+        var unified = new Dictionary<NdfObject, NdfObject>(ReferenceEqualityComparer.Instance);
 
         NdfObject Unify(NdfObject value)
         {
@@ -81,7 +86,7 @@ public sealed class NdfMerger
         }
 
         NdfObject UnifyFields(NdfObject value) => new(value.ClassName,
-            value.Fields.Select(f => new KeyValuePair<string, NdfValue>(f.Key, UnifyValue(f.Value))).ToArray());
+            value.Fields.Select(f => new KeyValuePair<string, NdfValue>(f.Key, UnifyValue(f.Value))).ToArray(), value.Origin);
 
         NdfValue UnifyValue(NdfValue value) => value switch
         {
@@ -109,7 +114,7 @@ public sealed class NdfMerger
             token.ThrowIfCancellationRequested();
             return new NdfDatabase(
                 database.TopLevel.Select(t => new NdfTopLevel(t.ExportPath, t.ExportPath is null ? Unify(t.Value) : UnifyFields(t.Value))).ToArray(),
-                database.SharedObjects.Select(Unify).ToHashSet(), database.PropertyOwners);
+                database.PropertyOwners);
         }
 
         return (vanilla is null ? null : UnifyDatabase(vanilla),
@@ -121,16 +126,11 @@ public sealed class NdfMerger
     /// only collisions left are exports, such as units two mods cloned with the same id. References to exports go
     /// by path, so the export that keeps vanilla's id (or else comes first) stays and the others get a new id.
     /// </summary>
-    private List<NdfTopLevel> SettleDescriptors(List<NdfTopLevel> merged, NdfDatabase? vanilla,
-        IReadOnlyList<NdfVariant> variants, HashSet<NdfObject> shared)
+    private List<NdfTopLevel> SettleDescriptors(List<NdfTopLevel> merged, NdfDatabase? vanilla, IReadOnlyList<NdfVariant> variants)
     {
         var claimed = new HashSet<NdfValue>();
         foreach (var nested in NestedObjects(merged))
-        {
-            if (DescriptorId(nested) is not { } id) continue;
-            claimed.Add(id);
-            shared.Add(nested);
-        }
+            if (DescriptorId(nested) is { } id) claimed.Add(id);
         var vanillaIds = vanilla?.TopLevel.Where(t => t.ExportPath is not null && DescriptorId(t.Value) is not null)
             .Select(t => (t.ExportPath!, (NdfValue)DescriptorId(t.Value)!)).ToHashSet() ?? [];
         var exports = merged.Where(t => t.ExportPath is not null && DescriptorId(t.Value) is not null)
@@ -144,7 +144,7 @@ public sealed class NdfMerger
             var replacement = new NdfRaw(id.Type, SHA256.HashData(Encoding.UTF8.GetBytes($"{path}|{Convert.ToHexString(id.Data)}"))[..id.Data.Length]);
             claimed.Add(replacement);
             reassigned[path] = new NdfObject(top.Value.ClassName, top.Value.Fields
-                .Select(f => f.Key == DescriptorIdField ? new KeyValuePair<string, NdfValue>(f.Key, replacement) : f).ToArray());
+                .Select(f => f.Key == DescriptorIdField ? new KeyValuePair<string, NdfValue>(f.Key, replacement) : f).ToArray(), top.Value.Origin);
             var owner = variants.FirstOrDefault(v => v.Database.TopLevel.Any(t => t.ExportPath == path))?.ModName ?? "vanilla";
             _conflicts.Add(new NdfConflict(ShortName(path), owner, [],
                 $"given the new descriptor {DescribeDescriptor(replacement)} because {DescribeDescriptor(id)} is already used"));
@@ -188,20 +188,46 @@ public sealed class NdfMerger
         }
     }
 
+    /// <summary>
+    /// A private constant (an anonymous top-level object) has no name to match it by, and WARNO compiles separate
+    /// constants with equal content, so a constant is the n-th one with its content: vanilla's second
+    /// "TSequenceCondition_Phase PhaseType=2" is each mod's second one.
+    /// </summary>
+    private sealed record ConstantKey(NdfObject Content, int Occurrence);
+
+    /// <summary>Each top-level entry's key: its export path, or its <see cref="ConstantKey"/>.</summary>
+    private static List<(object Key, NdfObject Value)> Keys(IReadOnlyList<NdfTopLevel> topLevel)
+    {
+        var occurrences = new Dictionary<NdfObject, int>();
+        return topLevel.Select(t =>
+        {
+            if (t.ExportPath is not null) return ((object)t.ExportPath, t.Value);
+            var n = occurrences.GetValueOrDefault(t.Value);
+            occurrences[t.Value] = n + 1;
+            return (new ConstantKey(t.Value, n), t.Value);
+        }).ToList();
+    }
+
     private List<NdfTopLevel> MergeTopLevel(NdfDatabase vanilla, IReadOnlyList<NdfVariant> variants, CancellationToken token)
     {
-        var baseByKey = Index(vanilla.TopLevel);
-        var variantMaps = variants.Select(v => Index(v.Database.TopLevel)).ToArray();
-        var order = MergeOrder(vanilla.TopLevel.Select(t => t.Key).ToList(),
-            variants.Select(v => v.Database.TopLevel.Select(t => t.Key).ToList()).ToList());
+        var baseKeys = Keys(vanilla.TopLevel);
+        var variantKeys = variants.Select(v => Keys(v.Database.TopLevel)).ToArray();
+        var baseByKey = baseKeys.ToDictionary(k => k.Key, k => (NdfValue)k.Value);
+        var variantMaps = variantKeys.Select(keys => keys.ToDictionary(k => k.Key, k => (NdfValue)k.Value)).ToArray();
+        var order = MergeOrder(baseKeys.Select(k => k.Key).ToList(), variantKeys.Select(keys => keys.Select(k => k.Key).ToList()).ToList());
         var result = new List<NdfTopLevel>(order.Count);
+        var constants = new Dictionary<ConstantKey, NdfObject>();
         foreach (var key in order)
         {
             token.ThrowIfCancellationRequested();
-            if (key is NdfObject anonymous)
+            if (key is ConstantKey constantKey)
             {
-                // Private constants are identified by content; their uses are merged inline where referenced.
-                result.Add(new NdfTopLevel(null, anonymous));
+                // Equal content wherever it comes from; the highest-priority mod's instance (and its debug line) is kept.
+                var constant = (NdfObject)(variantMaps.Select(m => m.GetValueOrDefault(key)).FirstOrDefault(v => v is not null)
+                    ?? baseByKey[key]);
+                constants[constantKey] = constant;
+                if (baseByKey.ContainsKey(key) && variantMaps.Any(m => !m.ContainsKey(key))) _removedConstants.Add(constant);
+                result.Add(new NdfTopLevel(null, constant));
                 continue;
             }
             var path = (string)key;
@@ -211,6 +237,9 @@ public sealed class NdfMerger
             if (value is NdfObject obj) result.Add(new NdfTopLevel(path, obj));
             else if (value is not null) throw new NdfFormatException($"Export {path} merged to a non-object value.");
         }
+        foreach (var keys in variantKeys.Prepend(baseKeys))
+            foreach (var (key, value) in keys)
+                if (key is ConstantKey constantKey) _constants[value] = constants[constantKey];
         return result;
     }
 
@@ -227,19 +256,14 @@ public sealed class NdfMerger
         {
             token.ThrowIfCancellationRequested();
             var path = variants[0].Database.TopLevel[i].ExportPath;
-            var value = MergeValue(path is null ? $"#{i}" : ShortName(path), null,
-                variants.Select(v => (v.ModName, (NdfValue?)v.Database.TopLevel[i].Value)).ToArray(), out var changed);
+            var value = (NdfObject)MergeValue(path is null ? $"#{i}" : ShortName(path), null,
+                variants.Select(v => (v.ModName, (NdfValue?)v.Database.TopLevel[i].Value)).ToArray(), out var changed)!;
             if (changed) _changedObjects++;
-            result.Add(new NdfTopLevel(path, (NdfObject)value!));
+            result.Add(new NdfTopLevel(path, value));
+            // A private constant here is the one at the same position in every mod.
+            if (path is null) foreach (var variant in variants) _constants[variant.Database.TopLevel[i].Value] = value;
         }
         return result;
-    }
-
-    private static Dictionary<object, NdfValue> Index(IReadOnlyList<NdfTopLevel> topLevel)
-    {
-        var map = new Dictionary<object, NdfValue>();
-        foreach (var top in topLevel) map.TryAdd(top.Key, top.Value);
-        return map;
     }
 
     private static string ShortName(string path) => path[(path.LastIndexOf('/') + 1)..];
@@ -278,6 +302,13 @@ public sealed class NdfMerger
 
     private NdfObject MergeObject(string path, NdfObject? baseValue, IReadOnlyList<(string Mod, NdfValue? Value)> variants)
     {
+        var key = new InstanceKey([baseValue, .. variants.Select(v => v.Value)]);
+        if (_mergedObjects.TryGetValue(key, out var done)) return done;
+        return _mergedObjects[key] = BuildMergedObject(path, baseValue, variants);
+    }
+
+    private NdfObject BuildMergedObject(string path, NdfObject? baseValue, IReadOnlyList<(string Mod, NdfValue? Value)> variants)
+    {
         var className = variants.Select(v => v.Value).OfType<NdfObject>().First().ClassName;
         var names = new List<string>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -291,7 +322,9 @@ public sealed class NdfMerger
                 variants.Select(v => (v.Mod, v.Value is NdfObject o ? o.Get(name) : (baseValue?.Get(name)))).ToArray(), out _);
             if (value is not null) fields.Add(new(name, value));
         }
-        return new NdfObject(className, fields);
+        // The merged object takes the place of vanilla's (or else the first mod's), so it keeps that identity.
+        var origin = (baseValue ?? variants.Select(v => v.Value).OfType<NdfObject>().First()).Origin;
+        return new NdfObject(className, fields, origin);
     }
 
     private NdfPair MergePair(string path, NdfPair? baseValue, IReadOnlyList<(string Mod, NdfValue? Value)> variants)
@@ -461,6 +494,97 @@ public sealed class NdfMerger
                 case NdfMap m: foreach (var e in m.Entries) { stack.Push(e.Key); stack.Push(e.Value); } break;
                 case NdfPair p: stack.Push(p.First); stack.Push(p.Second); break;
             }
+        }
+    }
+
+    /// <summary>
+    /// Merged values still point at vanilla's or a mod's own instance of a private constant; each such reference is
+    /// pointed at the merged constant it became (see <see cref="ConstantKey"/>). A constant some mod removed, or that
+    /// the inputs used, is dropped once nothing in the merged database references it; one WARNO itself keeps
+    /// unreferenced stays.
+    /// </summary>
+    private List<NdfTopLevel> SettleConstants(List<NdfTopLevel> merged, IReadOnlyList<NdfDatabase> sources)
+    {
+        var used = new HashSet<NdfObject>(ReferenceEqualityComparer.Instance);
+        foreach (var source in sources)
+            foreach (var referenced in ReferencedObjects(source.TopLevel))
+                if (_constants.TryGetValue(referenced, out var constant)) used.Add(constant);
+
+        var rewritten = new Dictionary<NdfObject, NdfObject>(ReferenceEqualityComparer.Instance);
+        NdfObject Rewrite(NdfObject value)
+        {
+            if (rewritten.TryGetValue(value, out var done)) return done;
+            if (_constants.TryGetValue(value, out var constant) && !ReferenceEquals(constant, value))
+                return rewritten[value] = Rewrite(constant);
+            var changed = false;
+            var fields = new KeyValuePair<string, NdfValue>[value.Fields.Count];
+            for (var i = 0; i < fields.Length; i++)
+            {
+                var field = RewriteValue(value.Fields[i].Value);
+                changed |= !ReferenceEquals(field, value.Fields[i].Value);
+                fields[i] = new(value.Fields[i].Key, field);
+            }
+            return rewritten[value] = changed ? new NdfObject(value.ClassName, fields, value.Origin) : value;
+        }
+        NdfValue RewriteValue(NdfValue value) => value switch
+        {
+            NdfObject o => Rewrite(o),
+            NdfList l => Rebuilt(l.Items, items => new NdfList(items), l),
+            NdfMap m => Rebuilt(m.Entries.SelectMany(e => new[] { e.Key, e.Value }).ToArray(),
+                items => new NdfMap(Enumerable.Range(0, items.Length / 2)
+                    .Select(i => new KeyValuePair<NdfValue, NdfValue>(items[2 * i], items[2 * i + 1])).ToArray()), m),
+            NdfPair p => Rebuilt([p.First, p.Second], items => new NdfPair(items[0], items[1]), p),
+            _ => value
+        };
+        NdfValue Rebuilt(IReadOnlyList<NdfValue> items, Func<NdfValue[], NdfValue> build, NdfValue original)
+        {
+            var result = items.Select(RewriteValue).ToArray();
+            return result.Where((item, i) => !ReferenceEquals(item, items[i])).Any() ? build(result) : original;
+        }
+
+        var settled = merged.Select(t => (Original: t.Value, Top: t with { Value = Rewrite(t.Value) })).ToList();
+        var referencedNow = new HashSet<NdfObject>(ReferencedObjects(settled.Select(s => s.Top)), ReferenceEqualityComparer.Instance);
+        return settled.Where(s => s.Top.ExportPath is not null || referencedNow.Contains(s.Top.Value)
+                || !used.Contains(s.Original) && !_removedConstants.Contains(s.Original))
+            .Select(s => s.Top).ToList();
+    }
+
+    /// <summary>Every object some field references (as opposed to objects that are only top-level roots).</summary>
+    private static IEnumerable<NdfObject> ReferencedObjects(IEnumerable<NdfTopLevel> topLevel)
+    {
+        var visited = new HashSet<NdfObject>(ReferenceEqualityComparer.Instance);
+        var stack = new Stack<NdfValue>();
+        foreach (var top in topLevel)
+            if (visited.Add(top.Value)) foreach (var field in top.Value.Fields) stack.Push(field.Value);
+        var referenced = new HashSet<NdfObject>(ReferenceEqualityComparer.Instance);
+        while (stack.Count > 0)
+        {
+            switch (stack.Pop())
+            {
+                case NdfObject o:
+                    referenced.Add(o);
+                    if (visited.Add(o)) foreach (var field in o.Fields) stack.Push(field.Value);
+                    break;
+                case NdfList l: foreach (var item in l.Items) stack.Push(item); break;
+                case NdfMap m: foreach (var e in m.Entries) { stack.Push(e.Key); stack.Push(e.Value); } break;
+                case NdfPair p: stack.Push(p.First); stack.Push(p.Second); break;
+            }
+        }
+        return referenced;
+    }
+
+    /// <summary>A tuple of instances compared by reference.</summary>
+    private sealed class InstanceKey(NdfValue?[] items) : IEquatable<InstanceKey>
+    {
+        private readonly NdfValue?[] _items = items;
+        public bool Equals(InstanceKey? other) =>
+            other is not null && other._items.Length == _items.Length && _items.Zip(other._items).All(p => ReferenceEquals(p.First, p.Second));
+        public override bool Equals(object? obj) => Equals(obj as InstanceKey);
+        public override int GetHashCode()
+        {
+            var hash = new HashCode();
+            foreach (var item in _items) hash.Add(item is null ? 0 : RuntimeHelpers.GetHashCode(item));
+            return hash.ToHashCode();
         }
     }
 }

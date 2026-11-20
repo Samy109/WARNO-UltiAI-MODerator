@@ -47,6 +47,9 @@ public static class NdfLayout
         return stem + Legacy;
     }
 
+    /// <summary>The .dbg listing a .txn database's objects: Gen\NDF\GFX\Unit.txn → Gen\NDF\GFX\Unit.dbg.</summary>
+    public static string DebugInfoPath(string transactionPath) => transactionPath[..^Transaction.Length] + ".dbg";
+
     /// <summary>The Config.ini [Config] key of a database in either layout, such as GFX/Pawn or Localisation/X.</summary>
     public static string ManifestKey(string relativePath)
     {

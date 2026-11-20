@@ -1,4 +1,17 @@
-﻿# WARNO UltiAI MODerator v2.0.3
+﻿# WARNO UltiAI MODerator v2.1.0
+
+- **Fixed "No writable component found: 'ZZ:/NDF/Scenario/GFX/Skirmish.txn'"**: A database that several mods change (such as Skirmish, for UltiAI + Honor Or Death) is merged and written back by the app. That writer was made for WARNO's old database format: it folded together objects that were equal but separate, and laid the rest out in its own order. WARNO's new loader rejects that. The writer now lays out a database exactly as WARNO does: all 394 of 395 databases installed here are written back byte for byte. The last, vanilla `Typefaces.txn`, differs only in the order of its name table.
+- **Debug info that matches the merged database**: Every database comes with a `.dbg` file listing its objects in order. A merged database used to get the primary mod's unchanged `.dbg`, which listed the wrong objects. It now gets one written with it, one line per object. A database taken from a single mod always comes with that mod's own `.dbg` and `.tag`.
+- **More exact merging**: Objects shared by several parts of a database stay one object. Each descriptor id is one object, so no GUID is duplicated. Private constants keep their identity even when two have the same content, and constants a mod removed or replaced are dropped instead of left behind.
+- **No silent fallbacks**: If a database several mods change can't be merged, or WARNO's vanilla data can't be found, the app now stops with the reason. It no longer quietly uses one mod's copy and drops the others' changes. Vanilla data is only taken from the exact location for your WARNO build.
+- **Fixed a false "interrupted build" prompt**: A build still running in another window is no longer offered for recovery.
+- **New look**: A redesigned window. Your mods and output sit in a sidebar, and the merge plan has summary tiles, search, a conflicts-only switch, clearer decision badges and a collapsible activity log. The title bar is dark.
+
+Extract the entire Windows x64 ZIP before running the executable. Rebuild any combined mod made with an earlier version to pick up the fixes.
+
+---
+
+# WARNO UltiAI MODerator v2.0.3
 
 - **Fixed "No writable component found" when loading a combined mod**: Since WARNO's November update, every database a mod generates (such as `Localisation\UltiAG\DicoDef.txn`) comes with a `.tag` file next to it, and WARNO won't load the database without it. The app left all `.tag` files out, so combined mods failed to load with `No writable component found: 'ZZ:/NDF/Localisation/UltiAG/DicoDef.txn'` (or another mod's name). Each `.tag` file now comes with its database, from the mod whose copy is used. For a database merged from several mods, it comes from the highest-priority mod that changed it.
 - **Works with WARNO's new database format**: The update renamed compiled databases from `.ndfbin` to `.txn` and moved WARNO's own copies into `Transactions.dat`. The app now reads the vanilla databases from there for delta merging. It renames the databases of mods published before the update to the new names, so the game can find them.
