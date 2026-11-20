@@ -52,6 +52,8 @@ public sealed class MergePlanner(SourceDeltaAnalyzer deltaAnalyzer)
         for (var i = 0; i < mods.Count; i++)
             for (var j = i + 1; j < mods.Count; j++)
                 if (SamePath(mods[i].RootPath, mods[j].RootPath)) throw new CombineException($"{mods[i].Name} is selected twice.");
+                else if (mods[i].Name.Equals(mods[j].Name, StringComparison.OrdinalIgnoreCase))
+                    throw new CombineException($"Two mods named {mods[i].Name} are selected ({mods[i].KindLabel} and {mods[j].KindLabel}). They are versions of the same mod; keep one.");
         string? currentBase = null;
         foreach (var mod in mods)
         {

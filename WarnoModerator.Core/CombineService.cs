@@ -205,30 +205,42 @@ public sealed class CombineService(SourceDeltaAnalyzer deltaAnalyzer, IProcessRu
         log($"[STEP 5/7] Composing compiled payload ({plan.Summary})...");
         var staging = Path.Combine(source, ".combine-staging-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(staging);
+        var total = plan.Decisions.Count;
+        var hashes = new string[total];
         // The plan is the only source of file winners. Stage and verify before replacing generated inputs.
-        for (var i = 0; i < plan.Decisions.Count; i++)
+        ForEachFile(total, token, i =>
         {
             var decision = plan.Decisions[i];
             var staged = FileSystemOps.SafeCombine(staging, decision.RelativePath);
             FileSystemOps.CopyFileAtomic(decision.SourcePath!, staged, token);
-            VerifySameFile(staged, decision.SourcePath!, decision.RelativePath, token);
-            if (i % 25 == 0) report(40 + 30 * i / Math.Max(1, plan.Decisions.Count), "Composing and verifying files");
-        }
-        log($"  Staged and SHA-256 verified all {plan.Decisions.Count:N0} compiled payload files.");
+            hashes[i] = SourceDeltaAnalyzer.ComputeSha256(staged, token);
+            if (hashes[i] != SourceDeltaAnalyzer.ComputeSha256(decision.SourcePath!, token))
+                throw new CombineException($"Precedence verification failed for {decision.RelativePath}.");
+        }, done => report(40 + 25 * done / Math.Max(1, total), $"Staging files · {done:N0} of {total:N0}"));
+        log($"  Staged and SHA-256 verified all {total:N0} compiled payload files.");
+
+        var restamped = RestampTags(plan, staging, source, hashes, token);
+        log($"  Re-stamped {restamped:N0} generation tag(s) with the combined mod's own source hashes, so WARNO loads its databases as built.");
         SynthesizeConfig(request, plan, inputs, generatedConfig);
         foreach (var root in new[] { source, runtime })
         {
             token.ThrowIfCancellationRequested();
             var gen = Path.Combine(root, "Gen");
             if (Directory.Exists(gen)) Directory.Delete(gen, true);
-            foreach (var decision in plan.Decisions)
+        }
+        // Each file goes to both outputs and is checked against the hash taken while staging.
+        ForEachFile(total, token, i =>
+        {
+            var decision = plan.Decisions[i];
+            var staged = FileSystemOps.SafeCombine(staging, decision.RelativePath);
+            foreach (var root in new[] { source, runtime })
             {
-                var staged = FileSystemOps.SafeCombine(staging, decision.RelativePath);
                 var destination = FileSystemOps.SafeCombine(root, decision.RelativePath);
                 FileSystemOps.CopyFileAtomic(staged, destination, token);
-                VerifySameFile(destination, staged, decision.RelativePath, token);
+                if (SourceDeltaAnalyzer.ComputeSha256(destination, token) != hashes[i])
+                    throw new CombineException($"Deployment verification failed for {decision.RelativePath}.");
             }
-        }
+        }, done => report(65 + 20 * done / Math.Max(1, total), $"Installing files · {done:N0} of {total:N0}"));
         log($"  Deployed verified payload to Mods\\{request.OutputName} and Saved Games\\...\\mod\\{request.OutputName}.");
         report(85, "Writing compatibility manifest");
         var configPath = Path.Combine(runtime, "Config.ini");
@@ -239,6 +251,57 @@ public sealed class CombineService(SourceDeltaAnalyzer deltaAnalyzer, IProcessRu
             if (saved.Get("Config", entry.Key) != entry.Value) throw new CombineException($"Manifest verification failed for {entry.Key}.");
         log($"[STEP 6/7] Wrote and verified Config.ini manifest ({configSection.Count:N0} NDF database fingerprints, DeckFormatVersion {saved.Get("Properties", "DeckFormatVersion")}, Tags: {saved.Get("Properties", "TagList")}).");
         Directory.Delete(staging, true);
+    }
+
+    /// <summary>Runs a file operation over many files on a few threads (disk-bound work), reporting progress as it goes.</summary>
+    private static void ForEachFile(int count, CancellationToken token, Action<int> work, Action<int> progress)
+    {
+        var done = 0;
+        var options = new ParallelOptions { CancellationToken = token, MaxDegreeOfParallelism = Math.Clamp(Environment.ProcessorCount / 2, 2, 6) };
+        try
+        {
+            Parallel.For(0, count, options, i =>
+            {
+                work(i);
+                var finished = Interlocked.Increment(ref done);
+                if (finished % 64 == 0 || finished == count) progress(finished);
+            });
+        }
+        catch (AggregateException ex) when (ex.InnerExceptions.Count > 0)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerExceptions[0]).Throw();
+        }
+    }
+
+    /// <summary>
+    /// Re-stamps every staged tag that lists source hashes (see <see cref="GenerationTag"/>) with the hashes of the
+    /// sources the combined mod contains: a source the plan placed comes from staging, any other from the output's
+    /// own sources (WARNO's vanilla base and the editable inputs). Returns how many tags were re-stamped.
+    /// </summary>
+    private static int RestampTags(MergePreview plan, string staging, string source, string[] hashes, CancellationToken token)
+    {
+        var placed = plan.Decisions.ToDictionary(d => d.RelativePath, d => FileSystemOps.SafeCombine(staging, d.RelativePath), StringComparer.OrdinalIgnoreCase);
+        string SourceFile(string sourcePath)
+        {
+            var relative = GenerationTag.ModRelativePath(sourcePath);
+            if (placed.TryGetValue(relative, out var staged)) return staged;
+            var own = FileSystemOps.SafeCombine(source, relative);
+            if (File.Exists(own)) return own;
+            throw new CombineException($"A generation tag lists {sourcePath}, which the combined mod doesn't contain.");
+        }
+        var restamped = 0;
+        for (var i = 0; i < plan.Decisions.Count; i++)
+        {
+            token.ThrowIfCancellationRequested();
+            if (!plan.Decisions[i].RelativePath.EndsWith(".tag", StringComparison.OrdinalIgnoreCase)) continue;
+            var staged = FileSystemOps.SafeCombine(staging, plan.Decisions[i].RelativePath);
+            var bytes = File.ReadAllBytes(staged);
+            if (!GenerationTag.HasSourceHashes(bytes)) continue;
+            File.WriteAllBytes(staged, GenerationTag.Restamp(bytes, SourceFile));
+            hashes[i] = SourceDeltaAnalyzer.ComputeSha256(staged, token);
+            restamped++;
+        }
+        return restamped;
     }
 
     private static void SynthesizeConfig(CombineRequest request, MergePreview plan, IReadOnlyList<CompiledInput> inputs, IniDocument output)

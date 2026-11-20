@@ -96,9 +96,11 @@ public sealed class BuildRecovery
                 if (existed && !Directory.Exists(backup)) return;
                 if (Directory.Exists(output))
                 {
-                    var incomplete = output + ".warno-moderator-incomplete-" + Guid.NewGuid().ToString("N");
-                    Directory.Move(output, incomplete);
-                    log($"Incomplete output preserved at: {incomplete}");
+                    // A half-built output is never usable; it is removed so nothing stale is left behind.
+                    foreach (var file in Directory.EnumerateFiles(output, "*", SearchOption.AllDirectories))
+                        File.SetAttributes(file, FileAttributes.Normal);
+                    Directory.Delete(output, true);
+                    log($"Deleted the incomplete output at {output}.");
                 }
                 if (Directory.Exists(backup)) Directory.Move(backup, output);
             }

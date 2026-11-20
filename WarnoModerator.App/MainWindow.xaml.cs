@@ -25,6 +25,8 @@ public partial class MainWindow : Window
     private readonly CombinedModStateStore _stateStore = new();
     private readonly CombineService _service = new(new SourceDeltaAnalyzer(), new ProcessRunner());
     private readonly CombinationHealth _health = new();
+    private readonly CombinedModRemover _remover = new();
+    private IReadOnlyList<CombinedModFiles> _leftovers = [];
     private WarnoPaths? _paths;
     private IReadOnlyList<ModDescriptor> _installed = [];
     private readonly List<ModDescriptor> _order = [];
@@ -93,7 +95,7 @@ public partial class MainWindow : Window
         {
             token.ThrowIfCancellationRequested();
             if (!record.Committed && MessageBox.Show(
-                $"An interrupted build of '{record.OutputName}' was found. Restore the previous outputs now? Incomplete output will be preserved separately.",
+                $"An interrupted build of '{record.OutputName}' was found. Restore the previous outputs now? The incomplete output will be deleted.",
                 "Recover interrupted build", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
             {
                 Log($"[RECOVERY] Recovery pending for {record.OutputName}; rebuild remains blocked until it is recovered.");
@@ -122,7 +124,52 @@ public partial class MainWindow : Window
         RefreshModLists();
 
         Log($"[SCAN] Found {mods.Count(m => m.Kind == ModKind.WorkshopCompiled)} Workshop and {mods.Count(m => m.Kind == ModKind.EditableSource)} editable SDK mods.");
+        await FindLeftoversAsync(paths, token);
         await CheckSelectionAsync(token);
+    }
+
+    private async Task FindLeftoversAsync(WarnoPaths paths, CancellationToken token)
+    {
+        _leftovers = await Task.Run(() => _remover.FindLeftovers(paths), token);
+        var folders = _leftovers.Sum(l => l.Folders.Count);
+        CleanLeftoversButton.Content = $"Remove {folders} leftover folder{(folders == 1 ? "" : "s")} from interrupted builds";
+        CleanLeftoversButton.Visibility = folders > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private async void DeleteMerge_Click(object sender, RoutedEventArgs e)
+    {
+        if (_paths is null || ExistingMergeBox.SelectedItem is not CombinedModState state) return;
+        var paths = _paths;
+        await RunUiAsync(async token =>
+        {
+            var files = await Task.Run(() => _remover.Find(paths, state.OutputName), token);
+            if (MessageBox.Show($"Delete the combined mod '{files.OutputName}'?\n\nThese folders will be permanently deleted:\n\n"
+                    + string.Join("\n", files.Folders) + "\n\nYour other mods are not touched. This can't be undone.",
+                    "Delete combined mod", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel) != MessageBoxResult.OK) return;
+            var log = new Progress<string>(message => Log("[DELETE] " + message));
+            await Task.Run(() => _remover.Delete(paths, files, ((IProgress<string>)log).Report), token);
+            _status = $"Deleted '{files.OutputName}' from both locations.";
+            await FindLeftoversAsync(paths, token);
+            await CheckSelectionAsync(token);
+        }, "Deleting combined mod");
+    }
+
+    private async void CleanLeftovers_Click(object sender, RoutedEventArgs e)
+    {
+        if (_paths is null || _leftovers.Count == 0) return;
+        var paths = _paths;
+        var leftovers = _leftovers;
+        await RunUiAsync(async token =>
+        {
+            if (MessageBox.Show("Delete the folders left behind by interrupted or cancelled builds?\n\n"
+                    + string.Join("\n", leftovers.SelectMany(l => l.Folders)) + "\n\nThis can't be undone.",
+                    "Remove leftovers", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel) != MessageBoxResult.OK) return;
+            var log = new Progress<string>(message => Log("[DELETE] " + message));
+            foreach (var files in leftovers)
+                await Task.Run(() => _remover.Delete(paths, files, ((IProgress<string>)log).Report), token);
+            _status = "Leftover folders removed.";
+            await FindLeftoversAsync(paths, token);
+        }, "Removing leftovers");
     }
 
     private ModDescriptor? Find(string? root) => _installed.FirstOrDefault(m => SamePath(m.RootPath, root));
@@ -507,6 +554,7 @@ public partial class MainWindow : Window
         ConflictsOnlyBox.IsEnabled = SearchBox.IsEnabled = !busy;
         BrowseButton.IsEnabled = RefreshButton.IsEnabled = WarnoPathBox.IsEnabled = AvailableModBox.IsEnabled = MergeOrderList.IsEnabled = !busy;
         ExistingMergeBox.IsEnabled = !busy && ExistingMergeBox.Items.Count > 0;
+        CleanLeftoversButton.IsEnabled = !busy;
         UpdateOrderButtons();
         UpdateActionStates();
     }
@@ -521,6 +569,7 @@ public partial class MainWindow : Window
 
         CombineButton.IsEnabled = !_busy && selected && valid && !exists && compatible;
         UpdateButton.IsEnabled = !_busy && selected && _existing is not null && compatible;
+        DeleteMergeButton.IsEnabled = !_busy && ExistingMergeBox.SelectedItem is CombinedModState;
         UpdateButton.Content = _changedMods.Count > 0 ? "Update and rebuild" : "Rebuild existing";
         OutputNameBox.IsEnabled = !_busy;
         ExportButton.IsEnabled = !_busy && _preview is not null;

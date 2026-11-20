@@ -1,4 +1,16 @@
-﻿# WARNO UltiAI MODerator v2.1.0
+﻿# WARNO UltiAI MODerator v2.1.1
+
+- **Fixed "No writable component found: 'ZZ:/NDF/Scenario/GFX/Skirmish.txn'"**: Each database's `.tag` file records a hash of every source file it was built from, and WARNO checks those against the sources the mod ships. If any differ, it treats the database as out of date and tries to rebuild it, which a mod can't do. A combined mod takes its sources from several mods, so the copied tags no longer matched. The app now rewrites every tag with the hashes of the sources the combined mod actually contains.
+- **No more freeze at 69%**: Installing the combined files gave no progress and was slow with large mods. Files are now copied and verified in parallel, each is hashed once, and the progress bar counts them.
+- **Delete combined mods**: A new delete button next to the existing-mod picker removes a combined mod from both `Mods` and `Saved Games`, including any leftover folders from earlier builds. It only deletes mods the MODerator created. A separate button removes leftovers from interrupted builds when there are any.
+- **Cancelled builds clean up after themselves**: A cancelled or failed build now deletes its half-built output instead of keeping it as an "incomplete" folder.
+- **Clear message when one mod is picked twice**: Selecting both the Workshop and the editable copy of the same mod (UltiAI, for example) now says so, instead of failing with "An item with the same key has already been added".
+
+Extract the entire Windows x64 ZIP before running the executable. Rebuild any combined mod made with an earlier version.
+
+---
+
+# WARNO UltiAI MODerator v2.1.0
 
 - **Fixed "No writable component found: 'ZZ:/NDF/Scenario/GFX/Skirmish.txn'"**: A database that several mods change (such as Skirmish, for UltiAI + Honor Or Death) is merged and written back by the app. That writer was made for WARNO's old database format: it folded together objects that were equal but separate, and laid the rest out in its own order. WARNO's new loader rejects that. The writer now lays out a database exactly as WARNO does: all 394 of 395 databases installed here are written back byte for byte. The last, vanilla `Typefaces.txn`, differs only in the order of its name table.
 - **Debug info that matches the merged database**: Every database comes with a `.dbg` file listing its objects in order. A merged database used to get the primary mod's unchanged `.dbg`, which listed the wrong objects. It now gets one written with it, one line per object. A database taken from a single mod always comes with that mod's own `.dbg` and `.tag`.

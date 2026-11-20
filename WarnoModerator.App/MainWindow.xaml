@@ -134,7 +134,19 @@
                         <TextBlock Text="New mod name" Style="{StaticResource Caption}" Margin="0,0,0,6"/>
                         <TextBox x:Name="OutputNameBox" TextChanged="OutputName_Changed" Margin="0,0,0,14"/>
                         <TextBlock Text="Or rebuild an existing combined mod" Style="{StaticResource Caption}" Margin="0,0,0,6"/>
-                        <ComboBox x:Name="ExistingMergeBox" DisplayMemberPath="OutputName" SelectionChanged="ExistingMerge_Changed" Margin="0,0,0,24"/>
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <ComboBox x:Name="ExistingMergeBox" DisplayMemberPath="OutputName" SelectionChanged="ExistingMerge_Changed"/>
+                            <Button x:Name="DeleteMergeButton" Grid.Column="1" Style="{StaticResource IconButton}" Content="&#xE74D;" Margin="6,0,0,0"
+                                    Foreground="{StaticResource DangerBrush}" Click="DeleteMerge_Click"
+                                    ToolTip="Delete this combined mod from both Mods and Saved Games, with its leftovers"/>
+                        </Grid>
+                        <Button x:Name="CleanLeftoversButton" HorizontalAlignment="Left" Margin="0,0,0,24" Padding="10,4" MinHeight="28" FontSize="12"
+                                Visibility="Collapsed" Click="CleanLeftovers_Click"
+                                ToolTip="Delete folders left behind by interrupted or cancelled builds"/>
                     </StackPanel>
                 </ScrollViewer>
 
