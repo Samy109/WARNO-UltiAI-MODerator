@@ -306,12 +306,7 @@ public sealed class CombineService(SourceDeltaAnalyzer deltaAnalyzer, IProcessRu
 
     private static void SynthesizeConfig(CombineRequest request, MergePreview plan, IReadOnlyList<CompiledInput> inputs, IniDocument output)
     {
-        // Inputs published before the .txn format change had their databases renamed by the plan.
-        var legacyInputs = inputs.Where(i => !ShipsTransactionDatabases(i.Root)).ToHashSet();
-        bool Provides(CompiledInput input, string relativePath) =>
-            File.Exists(Path.Combine(input.Root, relativePath))
-            || legacyInputs.Contains(input) && NdfLayout.IsTransactionDatabase(relativePath)
-            && File.Exists(Path.Combine(input.Root, NdfLayout.ToLegacyPath(relativePath)));
+        static bool Provides(CompiledInput input, string relativePath) => File.Exists(Path.Combine(input.Root, relativePath));
         foreach (var decision in plan.Decisions.Where(x => NdfLayout.IsDatabase(x.RelativePath)))
         {
             var key = NdfLayout.ManifestKey(decision.RelativePath);
@@ -337,12 +332,6 @@ public sealed class CombineService(SourceDeltaAnalyzer deltaAnalyzer, IProcessRu
         output.Set("Properties", "ID", "0");
         output.Set("Properties", "DeckFormatVersion", Math.Max(output.GetInt("Properties", "DeckFormatVersion"),
             request.Mods.Max(m => m.DeckFormatVersion)).ToString());
-    }
-
-    private static bool ShipsTransactionDatabases(string root)
-    {
-        var ndf = Path.Combine(root, "Gen", "NDF");
-        return Directory.Exists(ndf) && Directory.EnumerateFiles(ndf, "*.txn", SearchOption.AllDirectories).Any();
     }
 
     private static bool IsInputNamedDatabase(string key)

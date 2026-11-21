@@ -1,4 +1,14 @@
-﻿# WARNO UltiAI MODerator v2.1.1
+﻿# WARNO UltiAI MODerator v2.1.2
+
+- **Fixed "No writable component found" for databases whose `.tag` went missing**: A database several mods change (such as `Scenario/GFX/Skirmish.txn`) took its `.tag` only from the highest-priority mod that changed it. If that mod had no tag for it, the combined mod got the database without one, and WARNO won't load a database without its tag. The tag now comes from another mod that has one, and if no mod has one the combine stops and says which file it is, instead of making a mod that crashes on load.
+- **Old-format mods are refused with a clear message**: Mods made before WARNO's November database format change only have old `.ndfbin` databases and none of the `.tag` files WARNO now needs. The app used to rename their databases, but without tags WARNO still couldn't load them (`No writable component found: 'ZZ:/NDF/Localisation/<Mod>/DicoDef.txn'`). It now names the mod and asks you to remove it or wait for an update.
+- **Keeps mods' `CommonData` changes**: Changes a mod makes under `CommonData` (RebsFRAGO, YSM, ...) were left out of combined mods. They are now kept, with the same priority rules as `GameData`.
+
+Extract the entire Windows x64 ZIP before running the executable. After a WARNO update, rebuild your combined mods once every mod in them has updated.
+
+---
+
+# WARNO UltiAI MODerator v2.1.1
 
 - **Fixed "No writable component found: 'ZZ:/NDF/Scenario/GFX/Skirmish.txn'"**: Each database's `.tag` file records a hash of every source file it was built from, and WARNO checks those against the sources the mod ships. If any differ, it treats the database as out of date and tries to rebuild it, which a mod can't do. A combined mod takes its sources from several mods, so the copied tags no longer matched. The app now rewrites every tag with the hashes of the sources the combined mod actually contains.
 - **No more freeze at 69%**: Installing the combined files gave no progress and was slow with large mods. Files are now copied and verified in parallel, each is hashed once, and the progress bar counts them.

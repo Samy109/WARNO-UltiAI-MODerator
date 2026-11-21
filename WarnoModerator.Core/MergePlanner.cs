@@ -157,26 +157,25 @@ public sealed class MergePlanner(SourceDeltaAnalyzer deltaAnalyzer)
     }
 
     /// <summary>
-    /// Puts one mod's databases in the installed build's layout. On a .txn build, a mod published before the November
-    /// 2026 update ships only .ndfbin databases; WARNO looks for them under their .txn names and, finding none, fails
-    /// with "No writable component found" (for example 'ZZ:/NDF/Localisation/&lt;Mod&gt;/DicoDef.txn'). Their content
-    /// is the same container, so they are renamed. A mod that already ships .txn databases was rebuilt after the
-    /// update, and any .ndfbin it still carries is a stale leftover WARNO no longer reads, so those are left out.
+    /// Puts one mod's databases in the installed build's layout. A mod that ships .txn databases was rebuilt after
+    /// WARNO's November 2026 format change, and any .ndfbin it still carries is a stale leftover WARNO no longer reads,
+    /// so those are left out. A mod that ships only .ndfbin databases was published before it: it has none of the
+    /// .tag files WARNO now needs to load a database, so a combined mod using it can't load ("No writable component
+    /// found: 'ZZ:/NDF/Localisation/&lt;Mod&gt;/DicoDef.txn'"), and it is refused.
     /// </summary>
     private static Dictionary<string, string> MapToLayout(string inputName,
         IReadOnlyList<(string RelativePath, string FullPath)> listing, bool transactionLayout, List<string> notes)
     {
         var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var rebuilt = listing.Any(x => NdfLayout.IsTransactionDatabase(x.RelativePath));
-        int converted = 0, stale = 0;
+        if (transactionLayout && !rebuilt && listing.Any(x => NdfLayout.IsLegacyDatabase(x.RelativePath)))
+            throw new CombineException($"{inputName} was made before WARNO's November 2026 database format change. It only has old .ndfbin databases, without the .tag files WARNO now needs to load them, so a combined mod with it fails with \"No writable component found\". Remove {inputName}, or wait for its author to update it for the current WARNO version.");
+        var stale = 0;
         foreach (var (relativePath, fullPath) in listing)
         {
             if (!transactionLayout || !NdfLayout.IsLegacyDatabase(relativePath)) map[relativePath] = fullPath;
-            else if (rebuilt) stale++;
-            else { map[NdfLayout.ToTransactionPath(relativePath)] = fullPath; converted++; }
+            else stale++;
         }
-        if (converted > 0)
-            notes.Add($"{inputName} was published before WARNO's November 2026 database format change; its {converted:N0} database(s) were renamed to the new .txn layout so WARNO can load them.");
         if (stale > 0)
             notes.Add($"{inputName} still carries {stale:N0} .ndfbin database(s) from before WARNO's format change; WARNO no longer reads them, so they were left out.");
         return map;
@@ -313,9 +312,22 @@ public sealed class MergePlanner(SourceDeltaAnalyzer deltaAnalyzer)
                 : string.Equals(files[i][decision.RelativePath], decision.SourcePath, StringComparison.OrdinalIgnoreCase)));
         var name = contributors[source].Name;
         var tagPath = decision.RelativePath + ".tag";
-        if (tags[source].TryGetValue(tagPath, out var tag))
-            yield return new MergeDecision(tagPath, MergeDecisionKind.Single, name,
-                $"Generation tag of {decision.RelativePath}, from {name}.", tag, Overlap: decision.Overlap);
+        // The used copy's own tag, or failing that another mod's tag of the same file, preferring the mods that
+        // changed it. Tags are re-stamped with the combined mod's sources, so only a tag's build configuration and
+        // list of sources carry over, and those are the same in every mod built from the same sources.
+        var tagSource = Enumerable.Range(0, contributors.Count)
+            .OrderByDescending(i => i == source).ThenByDescending(i => winners.Contains(contributors[i].Name))
+            .FirstOrDefault(i => tags[i].ContainsKey(tagPath), -1);
+        if (tagSource >= 0)
+        {
+            var tagOwner = contributors[tagSource].Name;
+            yield return new MergeDecision(tagPath, MergeDecisionKind.Single, tagOwner,
+                tagSource == source ? $"Generation tag of {decision.RelativePath}, from {name}."
+                    : $"Generation tag of {decision.RelativePath}, from {tagOwner} ({name} has none).",
+                tags[tagSource][tagPath], Overlap: decision.Overlap);
+        }
+        else if (NdfLayout.IsTransactionDatabase(decision.RelativePath))
+            throw new CombineException($"None of the selected mods has {tagPath}, the generation tag WARNO needs to load {decision.RelativePath}; without it the combined mod fails with \"No writable component found\". Refresh {name}'s Workshop download, or remove it.");
         if (!NdfLayout.IsTransactionDatabase(decision.RelativePath)) yield break;
         var debugPath = NdfLayout.DebugInfoPath(decision.RelativePath);
         if (merged)
@@ -378,7 +390,7 @@ public sealed class MergePlanner(SourceDeltaAnalyzer deltaAnalyzer)
 
     internal static IEnumerable<(string RelativePath, string FullPath)> EnumerateRuntimeFiles(string root)
     {
-        foreach (var child in new[] { "Gen", "GameData", "DatasMap", "DecorsSets", "Maps", "Scenarios" })
+        foreach (var child in new[] { "Gen", "GameData", "CommonData", "DatasMap", "DecorsSets", "Maps", "Scenarios" })
         {
             var directory = Path.Combine(root, child);
             if (!Directory.Exists(directory))
